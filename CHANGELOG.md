@@ -1,8 +1,15 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.1 — Group-only Broadcast Recipients
+
+- Restricted broadcast destinations to basic groups, supergroups and gigagroups; ordinary broadcast channels are excluded even when the account is an administrator.
+- Kept channel membership tracking intact for the separate auto-subscribe workflow.
+- Automatically removed old broadcast-channel IDs and stale destinations from saved recipient allowlists.
+- Updated the recipient UI labels and added regression coverage for group/channel classification.
+
 ## 3.9.0 — Broadcast Workspace & Media Care
 
-- Added one-click selection of every available group and broadcast channel in the active Telegram profile; blocked and explicitly excluded chats are skipped.
+- Added one-click selection of all available groups in the active Telegram profile; blocked and explicitly excluded destinations are skipped.
 - Removed successfully left chats from the Cleaner catalog and the saved broadcast recipient allowlist.
 - Rebuilt the logs page as a live event feed with severity counters, search and level filters, plus automatic refresh.
 - Added a two-step media-folder cleanup workflow: preview, then typed confirmation; files referenced by `circles.db` and files newer than 24 hours are protected.
