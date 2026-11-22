@@ -15,4 +15,5 @@ jobs:
           cache: pip
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q combined_multi_account.py broadcast_core.py smart_cleaner.py telegram_manager_web.py
+      - run: bash -n setup.sh start.sh scripts/install_systemd.sh scripts/link_existing_install.sh
       - run: python -m pytest -q
