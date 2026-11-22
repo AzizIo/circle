@@ -730,7 +730,7 @@ class TelegramManagerRuntime:
                 temporary = path.suffix.lower() in temporary_suffixes
                 orphan = has_catalog
                 # Do not touch recent files; the archiver may still be writing them.
-                if age < 3600 or not (temporary or orphan):
+                if age < 86400 or not (temporary or orphan):
                     continue
                 reason = "Временный / незавершённый файл" if temporary else "Нет ссылки в circles.db"
                 candidates.append({"path": str(resolved), "name": str(path.relative_to(root)),
@@ -947,7 +947,14 @@ class TelegramManagerRuntime:
         if cfg is None:
             return
         current = cfg.get("broadcast_allowlist") or []
-        kept = [int(x) for x in current if int(x) not in ids]
+        kept = []
+        for raw_id in current:
+            try:
+                cid = int(raw_id)
+            except (TypeError, ValueError, OverflowError):
+                continue
+            if cid not in ids:
+                kept.append(cid)
         if len(kept) != len(current):
             cfg["broadcast_allowlist"] = kept
             self._save_config(cfg)
