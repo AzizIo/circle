@@ -169,4 +169,10 @@ async function loadLogs(){try{need();const q=new URLSearchParams({kind:$("logKin
 $("loadLogs").onclick=loadLogs;$("refreshLogs").onclick=loadLogs;
 async function boot(){const t=localStorage.getItem("circles_web_token");if(t){$("token").value=t;try{await loadProfiles();if(S.profile)await loadDashboard()}catch(e){connected(false);toast("Ошибка подключения: "+e.message,"error")}}const h=location.hash.slice(1);if(h&&titles[h])go(h)}
 boot();
+setInterval(()=>{
+ if(document.hidden||!token()||!S.profile)return;
+ const active=document.querySelector(".page.active");
+ if(active&&active.id==="page-broadcast")loadBroadcast().catch(()=>{});
+ else if(active&&active.id==="page-overview")loadDashboard().catch(()=>{});
+},5000);
 </script></body></html>
