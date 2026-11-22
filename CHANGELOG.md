@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.2 — One-click confirmations for routine actions
+
+- Replaced typed phrases with clear Yes/Cancel-style confirmation buttons for single chat leave, bulk leave after preview, campaign stop, and media cleanup.
+- Kept the typed `START N` confirmation for campaign launch as an explicit safeguard.
+- Preserved server-side preview IDs and expected confirmation checks for cleanup and leave operations; the UI supplies the server-generated token only after the user clicks the confirmation button.
+- Kept the destructive actions behind a separate explicit confirmation modal.
+
 ## 3.9.1 — Group-only Broadcast Recipients
 
 - Restricted broadcast destinations to basic groups, supergroups and gigagroups; ordinary broadcast channels are excluded even when the account is an administrator.
