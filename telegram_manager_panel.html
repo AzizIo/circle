@@ -70,7 +70,7 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
 </style></head><body>
 <div class="app">
 <aside class="sidebar">
-<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9</small></div></div>
+<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9.3</small></div></div>
 <div><div class="navlabel">Рабочее пространство</div><nav class="nav" id="nav">
 <a href="#overview" data-page="overview" class="active"><span class="ico">◈</span>Обзор</a>
 <a href="#chats" data-page="chats"><span class="ico">▤</span>Чаты / Cleaner</a>
@@ -188,7 +188,7 @@ async function api(path,opts){
 }
 function need(){if(!S.profile)throw new Error("Подключи панель и выбери профиль")}
 function connected(v){$("sideStatus").textContent=v?"Подключено":"Ожидание подключения";$("sideDot").classList.toggle("off",!v)}
-const titles={overview:"Overview",chats:"Chats / Smart Cleaner",broadcast:"Broadcast Studio",accounts:"Accounts",archive:"Media Archiver",settings:"Settings",logs:"Logs"};
+const titles={overview:"Обзор",chats:"Чаты / Cleaner",broadcast:"Объявления",accounts:"Аккаунты",archive:"Архиватор",settings:"Настройки",logs:"Журналы"};
 function go(p){document.querySelectorAll(".page").forEach(x=>x.classList.toggle("active",x.id==="page-"+p));document.querySelectorAll(".nav a").forEach(x=>x.classList.toggle("active",x.dataset.page===p));$("crumb").textContent=titles[p]||p;history.replaceState(null,"","#"+p);if(p==="overview")loadDashboard();if(p==="chats"){loadChatStats();loadChats()}if(p==="broadcast"){loadBroadcast();loadRecipients()}if(p==="accounts")loadProfiles();if(p==="archive"){loadSettings();loadArchiveCatalog()}if(p==="settings")loadSettings();if(p==="logs")loadLogs()}
 document.querySelectorAll(".nav a").forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.page)});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
