@@ -30,7 +30,7 @@ except (OSError, ValueError):
 valid = (
     bool(cfg.get("api_id"))
     and bool(cfg.get("api_hash"))
-    and bool(re.fullmatch(r"-100\\d+", str(cfg.get("target_chat_id") or "")))
+    and bool(re.fullmatch(r"-100\d+", str(cfg.get("target_chat_id") or "")))
     and bool(cfg.get("bot_token"))
 )
 raise SystemExit(0 if valid else 1)
