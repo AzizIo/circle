@@ -287,7 +287,7 @@ class WebManagerTests(unittest.TestCase):
         asyncio.run(run())
 
 
-    def test_select_all_recipients_includes_groups_and_channels_but_excludes_unavailable(self):
+    def test_select_all_recipients_only_includes_available_groups(self):
         async def run():
             import json
             with tempfile.TemporaryDirectory() as td:
@@ -302,8 +302,8 @@ class WebManagerTests(unittest.TestCase):
                     def __init__(self):
                         self.statuses = {101: "ok", 202: "ok", 303: "ban", 404: "ex"}
                     async def chat_list(self, refresh=False):
-                        return [(101, "Group"), (202, "Broadcast channel"),
-                                (303, "Blocked group"), (404, "Excluded channel")]
+                        return [(101, "Group"), (202, "Supergroup"),
+                                (303, "Blocked group"), (404, "Excluded group")]
                     def chat_status(self, chat_id):
                         return self.statuses[int(chat_id)]
                 runtime = TelegramManagerRuntime(base_dir=td)
@@ -437,6 +437,62 @@ class WebManagerTests(unittest.TestCase):
                 finally:
                     await client.close()
                     await runtime.stop()
+        asyncio.run(run())
+
+
+    def test_broadcast_dialog_scan_only_returns_groups_and_supergroups(self):
+        async def run():
+            from types import SimpleNamespace
+            from unittest.mock import patch
+            import combined_multi_account as app_module
+
+            class FakeChat:
+                def __init__(self, chat_id, title):
+                    self.id = chat_id
+                    self.title = title
+                    self.username = None
+                    self.deactivated = False
+
+            class FakeChannel:
+                def __init__(self, chat_id, title, *, broadcast=False, megagroup=False, gigagroup=False):
+                    self.id = chat_id
+                    self.title = title
+                    self.username = None
+                    self.deactivated = False
+                    self.broadcast = broadcast
+                    self.megagroup = megagroup
+                    self.gigagroup = gigagroup
+
+            entities = [
+                FakeChat(101, "Basic group"),
+                FakeChannel(202, "Supergroup", megagroup=True),
+                FakeChannel(303, "Broadcast channel", broadcast=True),
+                FakeChannel(404, "Broadcast channel with conflicting flags",
+                            broadcast=True, megagroup=True),
+                FakeChannel(505, "Gigagroup", gigagroup=True),
+            ]
+
+            class FakeClient:
+                async def iter_dialogs(self, ignore_migrated=True):
+                    for entity in entities:
+                        yield SimpleNamespace(entity=entity)
+
+            with tempfile.TemporaryDirectory() as td:
+                cfg = {
+                    "_config_path": str(Path(td) / "config.json"),
+                    "broadcast_allowlist_only": True,
+                    "broadcast_allowlist": [101, 202, 303, 404, 505, 999],
+                }
+                broadcaster = app_module.Broadcaster(cfg, FakeClient(), Path(td), enabled=False)
+                fake_types = SimpleNamespace(Chat=FakeChat, Channel=FakeChannel)
+                with patch.object(app_module, "types", fake_types):
+                    groups = await broadcaster._scan_dialogs_impl()
+
+                self.assertEqual([entity.id for entity in groups], [101, 202, 505])
+                self.assertEqual({101, 202, 303, 404, 505}, broadcaster.current_memberships)
+                self.assertEqual([101, 202, 505], cfg["broadcast_allowlist"])
+                self.assertEqual([101, 202, 505], [chat_id for chat_id, _ in broadcaster.chat_cache])
+
         asyncio.run(run())
 
 if __name__ == '__main__': unittest.main()
