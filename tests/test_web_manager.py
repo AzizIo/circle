@@ -244,7 +244,8 @@ class WebManagerTests(unittest.TestCase):
                     self.assertEqual(persisted["broadcast_hours"], 4)
                     self.assertFalse(persisted["save_outgoing"])
                     self.assertEqual(bc.interval_set, 90)
-                    self.assertEqual(bc.duration_set, 4)
+                    # Duration is applied live only to an active campaign; the saved config takes effect on next start.
+                    self.assertIsNone(bc.duration_set)
 
                     selected = await client.post(
                         "/api/profiles/default/broadcast/recipients", headers=headers,
