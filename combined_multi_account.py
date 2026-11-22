@@ -997,7 +997,8 @@ def media_extension(message, media_type: str) -> str:
         document = getattr(message, "document", None)
         attrs = list(getattr(document, "attributes", None) or [])
         filename_cls = getattr(types, "DocumentAttributeFilename", None)
-        filename_attr = next((a for a in attrs if filename_cls and isinstance(a, filename_cls)), None)        if filename_attr:
+        filename_attr = next((a for a in attrs if filename_cls and isinstance(a, filename_cls)), None)
+        if filename_attr:
             ext = Path(str(getattr(filename_attr, "file_name", "") or "")).suffix.lower()
     if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext):
         ext = {"round_video": ".mp4", "photo": ".jpg", "video": ".mp4"}.get(media_type, ".bin")
@@ -1996,7 +1997,8 @@ class Broadcaster:
             query = parse_qs(parsed.query, keep_blank_values=True)
 
             def bot_target(username, params):
-                username = (username or "").lstrip("@").strip()                if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+                username = (username or "").lstrip("@").strip()
+                if not re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
                     return None
                 # Telegram bot deep-link payload: 1..64 URL-safe characters.
                 if "start" in params:
@@ -2995,7 +2997,8 @@ class Broadcaster:
                 blog.warning("Нет права отправки в '%s' - исключил только этот чат", name)
                 return False, "noperm"
             except (asyncio.TimeoutError, TimeoutError, ConnectionError, OSError) as e:
-                # The request may have reached Telegram even if the acknowledgement was lost.                # Do not blindly retry an ambiguous send: that can create duplicate messages.
+                # The request may have reached Telegram even if the acknowledgement was lost.
+                # Do not blindly retry an ambiguous send: that can create duplicate messages.
                 blog.warning("Неизвестен результат отправки в '%s' после сетевой ошибки %s", name, type(e).__name__)
                 return False, "uncertain"
             except Exception as e:  # noqa: BLE001
@@ -3994,7 +3997,8 @@ class AccountManager:
         save_cfg(cfg)
         if name in self.configs:
             self.configs[name][key] = value
-        bc = self.broadcasters.get(name)        if bc and key == "broadcast_interval_min" and bc.running:
+        bc = self.broadcasters.get(name)
+        if bc and key == "broadcast_interval_min" and bc.running:
             bc.set_interval(value)
         elif bc and key == "broadcast_hours" and bc.running:
             bc.set_duration(value)
@@ -4993,7 +4997,8 @@ class ControlBot:
                 continue
             if selected == "pending" and int(pending or 0) <= 0:
                 continue
-            out.append(row)        sort_mode = state.get("sort", "recent")
+            out.append(row)
+        sort_mode = state.get("sort", "recent")
         if sort_mode == "few":
             out.sort(key=lambda r: (int(r[3]), self._catalog_dt(r[6]) or datetime.min.replace(tzinfo=timezone.utc)))
         elif sort_mode == "oldest":
@@ -6991,7 +6996,8 @@ def settings_menu(cfg):
         offer_restart()
 
 
-def people_menu(cfg):    ddir = data_dir(cfg)
+def people_menu(cfg):
+    ddir = data_dir(cfg)
     db = DB(ddir / "circles.db")
     while True:
         rows = db.people()
