@@ -95,7 +95,7 @@ CONFIG_PATH = Path(os.getenv("CIRCLES_CONFIG", str(BASE / "config.json")))
 DEFAULT_CONFIG_PATH = CONFIG_PATH
 ACCOUNTS_DIR = BASE / "accounts"
 SERVICE = "circles-archiver"
-APP_VERSION = "3.8.0"
+APP_VERSION = "3.9.0"
 AUTOSUB_OWNER_PAUSE_REASON = "приостановлена владельцем"
 
 
@@ -1778,7 +1778,9 @@ class Broadcaster:
                 new += 1
             if getattr(ent, "deactivated", False):
                 continue
-            if isinstance(ent, types.Chat) or getattr(ent, "megagroup", False):
+            # Include ordinary broadcast channels as well as groups and megagroups.
+            # The actual send permission is enforced by Telegram for each target.
+            if isinstance(ent, (types.Chat, types.Channel)):
                 groups.append(ent)
         self.current_memberships = current_memberships
         self._dialogs_scanned_at = time.time()
