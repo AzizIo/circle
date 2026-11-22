@@ -16,4 +16,15 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q combined_multi_account.py broadcast_core.py smart_cleaner.py telegram_manager_web.py
       - run: bash -n setup.sh start.sh scripts/install_systemd.sh scripts/link_existing_install.sh
+      - name: Check panel JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          html = Path("telegram_manager_panel.html").read_text(encoding="utf-8")
+          if "<script>" not in html or "</script>" not in html:
+              raise SystemExit("Panel script block not found")
+          script = html.split("<script>", 1)[1].split("</script>", 1)[0]
+          Path("/tmp/circles-panel.js").write_text(script, encoding="utf-8")
+          PY
+          node --check /tmp/circles-panel.js
       - run: python -m pytest -q
