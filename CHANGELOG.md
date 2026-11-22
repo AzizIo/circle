@@ -1,5 +1,15 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.0 — Broadcast Workspace & Media Care
+
+- Added one-click selection of every available group and broadcast channel in the active Telegram profile; blocked and explicitly excluded chats are skipped.
+- Removed successfully left chats from the Cleaner catalog and the saved broadcast recipient allowlist.
+- Rebuilt the logs page as a live event feed with severity counters, search and level filters, plus automatic refresh.
+- Added a two-step media-folder cleanup workflow: preview, then typed confirmation; files referenced by `circles.db` and files newer than 24 hours are protected.
+- Added page-aware background refresh and disabled browser caching for the panel shell to reduce stale UI and manual refreshes.
+- Updated the application version to 3.9.0.
+
+
 ## 3.8.0 — Web Control Center
 
 - Rebuilt the local web UI as a unified workspace: overview, chats/Smart Cleaner, broadcast studio, account manager, archiver, settings, and logs.
