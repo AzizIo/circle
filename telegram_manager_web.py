@@ -271,7 +271,9 @@ class TelegramManagerRuntime:
         self.account_manager = None
 
     async def index(self, request):
-        return web.Response(text=INDEX_HTML, content_type="text/html", charset="utf-8")
+        return web.Response(text=INDEX_HTML, content_type="text/html", charset="utf-8",
+                            headers={"Cache-Control": "no-store, no-cache, must-revalidate",
+                                     "Pragma": "no-cache", "Expires": "0"})
 
     async def health(self, request):
         return web.json_response({"ok": True, "version": "3.9.0"})
