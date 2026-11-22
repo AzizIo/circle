@@ -1,6 +1,7 @@
 # Credentials and local configuration
 .env
 config.json
+config*.bak
 accounts/
 data/
 
