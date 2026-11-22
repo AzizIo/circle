@@ -383,8 +383,8 @@ def cfg_problems(cfg: dict) -> list[str]:
         bad.append("не задан API ID")
     if not cfg["api_hash"]:
         bad.append("не задан API HASH")
-    if not cfg["target_chat_id"]:
-        bad.append("не задан ID группы-форума")
+    if not re.fullmatch(r"-100\d+", str(cfg.get("target_chat_id") or "")):
+        bad.append("ID группы-форума должен быть в формате -100...")
     return bad
 
 
@@ -7079,6 +7079,12 @@ def setup_wizard():
              ("api_hash", "API HASH (оттуда же)", str),
              ("target_chat_id", "ID группы-форума для архива медиа (формат -100...)", int),
              ("bot_token", "Токен бота-панели (создай у @BotFather, формат 123456789:AAH...)", str)]
+    # A previously interrupted setup saves each field immediately. Detect a malformed
+    # positive chat ID so rerunning the wizard asks for it again instead of skipping it.
+    if cfg.get("target_chat_id") and not re.fullmatch(r"-100\d+", str(cfg["target_chat_id"])):
+        print("Сохранённый ID группы-форума некорректен. Запрошу его повторно.")
+        cfg["target_chat_id"] = 0
+        save_cfg(cfg)
     for key, title, conv in steps:
         while not cfg[key]:
             raw = ask(title)
@@ -7088,6 +7094,9 @@ def setup_wizard():
                 val = conv(raw)
             except (TypeError, ValueError):
                 print("Не похоже на то, что нужно. Ещё раз.")
+                continue
+            if key == "target_chat_id" and not re.fullmatch(r"-100\d+", str(val)):
+                print("Нужен ID супергруппы/форума Telegram с префиксом -100, например -1001234567890.")
                 continue
             if key == "bot_token" and not re.fullmatch(r"\d+:[\w-]{20,}", val):
                 print("Это не похоже на токен. Формат: 123456789:AAH... (от @BotFather)")
