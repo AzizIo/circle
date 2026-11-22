@@ -454,7 +454,7 @@ class TelegramManagerRuntime:
             bc = self.broadcasters.get(name)
             if bc:
                 bc._apply_delays()
-                if "broadcast_interval_min" in changed and bc.running:
+                if "broadcast_interval_min" in changed:
                     bc.set_interval(cfg["broadcast_interval_min"])
                 if "broadcast_hours" in changed and bc.running:
                     bc.set_duration(cfg["broadcast_hours"])
@@ -534,7 +534,7 @@ class TelegramManagerRuntime:
         except ValueError:
             raise web.HTTPBadRequest(text="Некорректная пагинация")
         cfg = self.configs[name]
-        allowlist = {int(x) for x in cfg.get("broadcast_allowlist", []) if str(x).lstrip("-").isdigit()}
+        allowlist = bc._int_ids(cfg.get("broadcast_allowlist", []))
         items = []
         for cid, title in chats[offset:offset + limit]:
             cid = int(cid)
@@ -542,7 +542,7 @@ class TelegramManagerRuntime:
                           "selected": cid in allowlist})
         return web.json_response({"total": len(chats), "items": items, "offset": offset, "limit": limit,
                                   "allowlist_only": bool(cfg.get("broadcast_allowlist_only")),
-                                  "selected_count": len(allowlist)})
+                                  "selected_count": len(allowlist), "selected_ids": sorted(allowlist)})
 
     async def set_recipients(self, request):
         name = request.match_info["name"]
@@ -591,8 +591,14 @@ class TelegramManagerRuntime:
             if not post:
                 raise ValueError("В Избранном нет доступного сообщения для рассылки")
             live = {int(cid) for cid, _ in await bc.chat_list(refresh=True)}
-            if not set(int(x) for x in selected).issubset(live):
+            selected_ids = {int(x) for x in selected}
+            if not selected_ids.issubset(live):
                 raise ValueError("Список получателей изменился. Обнови чаты и сохрани выбор заново")
+            pending = bc.state.get("pending_wave") if isinstance(bc.state.get("pending_wave"), dict) else None
+            if bc.state.get("active") and pending:
+                pending_ids = {int(x) for x in pending.get("chat_ids", [])}
+                if not pending_ids.issubset(selected_ids):
+                    raise ValueError("Есть незавершённая очередь с другими получателями. Не запускаю её с новым списком — сначала заверши или останови прежнюю кампанию.")
             ok = bc.start(cfg.get("broadcast_interval_min", 60), cfg.get("broadcast_hours", 12))
             if not ok:
                 raise ValueError("Не удалось запустить кампанию. Проверь её текущее состояние")
