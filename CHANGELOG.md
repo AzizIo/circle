@@ -1,5 +1,16 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.3 — Workspace UX & Responsiveness
+
+- Added client-side GET request coalescing and a 30-second request timeout with readable errors.
+- Reduced background refresh frequency and prevented list refreshes while users are typing or have unsaved selections.
+- Parallelized dashboard and archive summary requests.
+- Added bounded waits for long-running chat scans and cleaner jobs.
+- Added responsive navigation, clearer focus states, reduced-motion support, and subtle workspace transitions.
+- Kept the campaign sending handler unchanged.
+
+
+
 ## 3.9.2 — One-click confirmations for routine actions
 
 - Replaced typed phrases with clear Yes/Cancel-style confirmation buttons for single chat leave, bulk leave after preview, campaign stop, and media cleanup.
