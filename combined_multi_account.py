@@ -95,7 +95,7 @@ CONFIG_PATH = Path(os.getenv("CIRCLES_CONFIG", str(BASE / "config.json")))
 DEFAULT_CONFIG_PATH = CONFIG_PATH
 ACCOUNTS_DIR = BASE / "accounts"
 SERVICE = "circles-archiver"
-APP_VERSION = "3.9.0"
+APP_VERSION = "3.9.1"
 AUTOSUB_OWNER_PAUSE_REASON = "приостановлена владельцем"
 
 
@@ -1778,15 +1778,33 @@ class Broadcaster:
                 new += 1
             if getattr(ent, "deactivated", False):
                 continue
-            # Include ordinary broadcast channels as well as groups and megagroups.
-            # The actual send permission is enforced by Telegram for each target.
-            if isinstance(ent, (types.Chat, types.Channel)):
+            # Broadcast recipients are groups only: basic groups + supergroups/gigagroups.
+            # A regular broadcast channel is never a campaign destination, even if this
+            # account has admin rights there. Keep all memberships above for auto-subscribe.
+            is_group = isinstance(ent, types.Chat)
+            if isinstance(ent, types.Channel):
+                is_group = (bool(getattr(ent, "megagroup", False))
+                            or bool(getattr(ent, "gigagroup", False))) \
+                    and not bool(getattr(ent, "broadcast", False))
+            if is_group:
                 groups.append(ent)
         self.current_memberships = current_memberships
         self._dialogs_scanned_at = time.time()
         if new:
             await self.save_subs(force=True)
         self.chat_cache = [(e.id, getattr(e, "title", None) or str(e.id)) for e in groups]
+
+        # Old versions could save broadcast-channel IDs in the recipient allowlist.
+        # Prune them (and IDs no longer in the current group list) before the UI or
+        # campaign can reuse that saved selection.
+        if self.cfg.get("broadcast_allowlist_only"):
+            raw_allowlist = self.cfg.get("broadcast_allowlist", [])
+            selected = self._int_ids(raw_allowlist)
+            group_ids = {int(entity.id) for entity in groups}
+            valid_ids = sorted(selected.intersection(group_ids))
+            if not isinstance(raw_allowlist, list) or raw_allowlist != valid_ids:
+                self.cfg["broadcast_allowlist"] = valid_ids
+                save_cfg(self.cfg)
         return groups
 
     async def load_dialogs(self) -> list:
