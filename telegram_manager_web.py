@@ -672,7 +672,16 @@ class TelegramManagerRuntime:
         except ValueError:
             raise web.HTTPBadRequest(text="Некорректная пагинация")
         cfg = self.configs[name]
-        allowlist = bc._int_ids(cfg.get("broadcast_allowlist", []))
+        allowlist = set()
+        for raw_id in cfg.get("broadcast_allowlist", []):
+            try:
+                if isinstance(raw_id, bool):
+                    continue
+                value = int(raw_id)
+                if value:
+                    allowlist.add(value)
+            except (TypeError, ValueError, OverflowError):
+                continue
         items = []
         for cid, title in chats[offset:offset + limit]:
             cid = int(cid)
