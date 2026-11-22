@@ -1794,7 +1794,13 @@ class Broadcaster:
         if any(until <= now for until in self._slow_until.values()):
             self._save_slow_modes()
         chats, n_skip, n_slow = [], 0, 0
+        # The web control center can switch a profile to explicit-recipient mode.
+        # In that mode only IDs deliberately selected in the UI are eligible.
+        allowlist_only = bool(self.cfg.get("broadcast_allowlist_only", False))
+        allowlist = self._int_ids(self.cfg.get("broadcast_allowlist", [])) if allowlist_only else set()
         for e in groups:
+            if allowlist_only and int(e.id) not in allowlist:
+                continue
             if e.id in self.banned or e.id in excl:
                 continue
             if self.skip.blocked_until(e.id) is not None:
@@ -6383,6 +6389,8 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
     # broadcast campaign. The live cfg switch controls the listener itself.
     bc = Broadcaster(cfg, client, ddir, notifier, enabled=True)
     bc.load_files()
+    if WEB_MANAGER_RUNTIME is not None:
+        WEB_MANAGER_RUNTIME.register_broadcaster(manager_profile_name, bc)
     if cfg.get("broadcast_auto_subscribe", True):
         bc._ensure_autosub_worker()
     if allow_broadcast and on_broadcaster_ready:
