@@ -1,0 +1,46 @@
+# Credentials and local configuration
+.env
+config.json
+accounts/*/config.json
+
+# Telegram authorization material — NEVER commit
+*.session
+*.session-journal
+Sessions/
+sessions/
+
+# Runtime data, queues and databases
+data/
+accounts/*/data/
+manager_data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+broadcast_state.json
+subscriptions.json
+banned_chats.json
+started_bots.json
+pending_invites.json
+slow_mode_until.json
+*.log
+logs/
+.telegram_manager_token
+manager_data/manager_access.json
+run.lock
+
+# Python/build/test artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.DS_Store
+
+# Local test/cache artifacts
+.pytest_cache/

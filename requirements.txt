@@ -1,0 +1,4 @@
+# Runtime dependencies for a clean installation
+telethon>=1.45.0,<2
+aiohttp>=3.9,<4
+python-dotenv>=1.0,<2
