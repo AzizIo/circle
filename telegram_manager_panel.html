@@ -8,6 +8,65 @@
 @media(max-width:1050px){.app{grid-template-columns:210px minmax(0,1fr)}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.grid2{grid-template-columns:1fr}}
 @media(max-width:720px){.app{display:block}.sidebar{position:relative;height:auto;padding:13px;gap:12px}.nav{grid-template-columns:repeat(4,minmax(0,1fr))}.nav a{padding:8px 5px;justify-content:center;font-size:10px;gap:5px}.nav .ico{width:auto}.navlabel,.sidebottom{display:none}.topbar{position:relative;align-items:flex-start;flex-direction:column}.toptools{width:100%;justify-content:flex-start}.token-input{width:min(55vw,230px)}.content{padding-top:20px}.heading h1{font-size:25px}.formgrid{grid-template-columns:1fr}.chatrow{grid-template-columns:22px minmax(0,1fr) auto}.chatstatus{display:none}}
 .log-stats{margin:14px 0}.log-controls{align-items:center}.log-controls .input{min-width:180px;flex:1}.log-options{justify-content:space-between;gap:12px;margin:10px 0}.event-log{display:grid;gap:7px;max-height:62vh;overflow:auto;padding:8px}.logentry{display:grid;grid-template-columns:145px 78px minmax(0,1fr);gap:10px;align-items:start;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:rgba(16,26,43,.72);font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}.logtime{color:var(--muted2);white-space:nowrap}.loglevel{font-weight:800;letter-spacing:.04em}.logmessage{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--text)}.level-ERROR,.level-CRITICAL{border-color:rgba(255,105,126,.45);background:rgba(112,28,49,.15)}.level-ERROR .loglevel,.level-CRITICAL .loglevel{color:#ff7389}.level-WARNING{border-color:rgba(255,193,92,.35)}.level-WARNING .loglevel{color:#ffc15c}.level-INFO .loglevel{color:#72d7a8}.level-DEBUG .loglevel{color:#9b8aff}.media-preview{margin-top:12px;max-height:300px;overflow:auto}.media-file{display:flex;justify-content:space-between;gap:14px;padding:9px 11px;border-bottom:1px solid var(--line);font-size:12px}.media-file b{overflow-wrap:anywhere}.row-loading{opacity:.65;pointer-events:none}.row-loading button:after{content:"…"}#logLiveState{white-space:nowrap}@media(max-width:720px){.logentry{grid-template-columns:1fr;gap:3px}.logtime{white-space:normal}.log-controls>*{min-width:0;width:100%}.log-options{align-items:flex-start;flex-direction:column}}
+ 
+/* 3.9.3 workspace polish */
+:root{--surface-glass:rgba(15,24,40,.78);--focus-ring:rgba(157,128,255,.28)}
+html{scroll-behavior:smooth;scroll-padding-top:88px}
+body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),transparent 37%),radial-gradient(ellipse at 8% 100%,rgba(49,133,151,.08),transparent 42%),linear-gradient(160deg,#090d17,#0c1422 58%,#090d17);background-attachment:fixed}
+.sidebar{background:rgba(10,16,28,.88);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.topbar{background:rgba(10,15,25,.76);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px)}
+.nav a{transition:background .18s ease,border-color .18s ease,color .18s ease,transform .18s ease}
+.nav a:hover{transform:translateX(2px)}
+.card,.stat{transition:border-color .18s ease,box-shadow .18s ease,background .18s ease}
+.card:hover{border-color:rgba(157,128,255,.27)}
+.stat:hover{border-color:rgba(157,128,255,.34);box-shadow:0 14px 32px rgba(0,0,0,.2)}
+.btn{min-height:38px;transition:transform .16s ease,background .16s ease,border-color .16s ease,box-shadow .16s ease}
+.btn:focus-visible,.nav a:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--purple);outline-offset:2px;box-shadow:0 0 0 4px var(--focus-ring)}
+.input,.select{transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+.page.active{animation:workspace-enter .2s ease both}
+@keyframes workspace-enter{from{opacity:.55;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.empty{line-height:1.7}
+.logentry:hover,.chatrow:hover{background:rgba(157,128,255,.045)}
+.toast{backdrop-filter:blur(16px);box-shadow:0 14px 40px rgba(0,0,0,.3)}
+@media(max-width:900px){
+ .app{display:block}
+ .sidebar{position:sticky;top:0;z-index:25;height:auto;padding:11px 14px;gap:10px;border-right:0;border-bottom:1px solid var(--line)}
+ .sidebar>div:nth-child(2){min-width:0}
+ .navlabel,.sidebottom{display:none}
+ .nav{display:flex;gap:6px;overflow-x:auto;overscroll-behavior-x:contain;padding:1px 0 5px;scrollbar-width:thin}
+ .nav a{flex:0 0 auto;padding:8px 11px;font-size:12px;white-space:nowrap}
+ .nav a:hover{transform:translateY(-1px)}
+ .topbar{top:88px;position:sticky;z-index:20;min-height:64px;padding:10px 16px}
+ .content{padding:22px clamp(14px,3vw,30px) 46px}
+}
+@media(max-width:600px){
+ .brandmark{width:34px;height:34px;border-radius:11px;font-size:16px}
+ .brandname{font-size:11px}
+ .brandname small{font-size:8px}
+ .nav a{padding:7px 9px;font-size:11px}
+ .topbar{align-items:stretch;gap:9px;top:78px}
+ .toptools{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px;width:100%}
+ #profileSelect{width:100%;grid-column:1/-1}
+ .tokenbox{display:flex;min-width:0}
+ .token-input{width:100%;min-width:0}
+ .toptools>.pill{justify-self:start}
+ .content{padding:18px 12px 34px}
+ .heading{align-items:flex-start;margin-bottom:16px}
+ .heading h1{font-size:24px}
+ .card{padding:14px;border-radius:14px}
+ .stats{gap:8px}
+ .stat{min-height:94px;padding:12px}
+ .stat .value{font-size:23px}
+ .toolbar .input{min-width:0;width:100%}
+ .toolbar .btn{flex:0 0 auto}
+ .modal{padding:18px}
+ .modal-actions .btn{flex:1}
+ .logentry{grid-template-columns:1fr;gap:3px}
+}
+@media(prefers-reduced-motion:reduce){
+ html{scroll-behavior:auto}
+ *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
 </style></head><body>
 <div class="app">
 <aside class="sidebar">
@@ -86,15 +145,47 @@
 <dialog class="modal" id="confirmModal"><h2 id="modalTitle">Подтверждение</h2><p id="modalText"></p><div class="field" id="modalInputField"><label id="modalLabel">Подтверждение</label><input class="input" id="modalInput" autocomplete="off"></div><div class="modal-actions"><button class="btn" id="modalCancel">Отмена</button><button class="btn danger" id="modalConfirm">Подтвердить</button></div></dialog><div class="toast" id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);
-const S={profile:"",profiles:[],chatPage:0,recipientPage:0,archivePage:0,archiveMediaPage:0,archiveUser:null,chatSelected:new Set(),recipientSelected:new Set(),recipientInitialized:false,recipientDirty:false,chatTotal:0,recipientTotal:0,savedPosts:[],mediaCleanupPreview:null,logLoading:false,modalResolve:null,lastChatPoll:0,lastRecipientPoll:0,lastArchivePoll:0,lastProfilePoll:0};
+const S={profile:"",profiles:[],chatPage:0,recipientPage:0,archivePage:0,archiveMediaPage:0,archiveUser:null,chatSelected:new Set(),recipientSelected:new Set(),recipientInitialized:false,recipientDirty:false,chatTotal:0,recipientTotal:0,savedPosts:[],mediaCleanupPreview:null,logLoading:false,modalResolve:null,lastChatPoll:0,lastRecipientPoll:0,lastArchivePoll:0,lastProfilePoll:0,inflight:Object.create(null)};
 const PAGE=100,REC_PAGE=100;
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function fmt(n){return new Intl.NumberFormat("ru-RU").format(Number(n||0))}
 function bytes(n){n=Number(n||0);if(n<1024)return n+" Б";const u=["КБ","МБ","ГБ","ТБ"];let i=-1;do{n/=1024;i++}while(n>=1024&&i<u.length-1);return n.toFixed(1)+" "+u[i]}
 function toast(m,t){const x=$("toast");x.textContent=m;x.className="toast show "+(t||"");clearTimeout(toast.timer);toast.timer=setTimeout(()=>x.className="toast",4500)}
+async function withButton(button,busyText,work){
+ if(!button||button.disabled)return;
+ const oldText=button.textContent;button.disabled=true;button.textContent=busyText;
+ try{return await work()}finally{button.disabled=false;button.textContent=oldText}
+}
 function token(){return $("token").value.trim()||localStorage.getItem("circles_web_token")||""}
 function url(path){return "/api/profiles/"+encodeURIComponent(S.profile)+path}
-async function api(path,opts){opts=opts||{};const h={"Authorization":"Bearer "+token()};if(opts.body)h["Content-Type"]="application/json";const r=await fetch(path,{cache:"no-store",...opts,headers:{...h,...(opts.headers||{})}});const raw=await r.text();let d={};try{d=raw?JSON.parse(raw):{}}catch(e){d={message:raw}}if(!r.ok)throw new Error(d.message||raw||("HTTP "+r.status));return d}
+async function api(path,opts){
+ opts=opts||{};
+ const method=String(opts.method||"GET").toUpperCase();
+ const key=method==="GET"?path:null;
+ if(key&&S.inflight[key])return S.inflight[key];
+ const controller=new AbortController();
+ const timeout=setTimeout(()=>controller.abort(),30000);
+ const task=(async()=>{
+  try{
+   const h={"Authorization":"Bearer "+token()};
+   if(opts.body)h["Content-Type"]="application/json";
+   const r=await fetch(path,{cache:"no-store",...opts,signal:controller.signal,headers:{...h,...(opts.headers||{})}});
+   const raw=await r.text();let data={};
+   try{data=raw?JSON.parse(raw):{}}catch(e){data={message:raw}}
+   if(!r.ok)throw new Error(data.message||data.error||raw||("HTTP "+r.status));
+   return data;
+  }catch(e){
+   if(e&&e.name==="AbortError")throw new Error("Сервер не ответил за 30 секунд. Проверь соединение и журнал событий.");
+   throw e;
+  }finally{clearTimeout(timeout)}
+ })();
+ if(key){
+  S.inflight[key]=task;
+  task.then(()=>{if(S.inflight[key]===task)delete S.inflight[key]},
+            ()=>{if(S.inflight[key]===task)delete S.inflight[key]});
+ }
+ return task;
+}
 function need(){if(!S.profile)throw new Error("Подключи панель и выбери профиль")}
 function connected(v){$("sideStatus").textContent=v?"Подключено":"Ожидание подключения";$("sideDot").classList.toggle("off",!v)}
 const titles={overview:"Overview",chats:"Chats / Smart Cleaner",broadcast:"Broadcast Studio",accounts:"Accounts",archive:"Media Archiver",settings:"Settings",logs:"Logs"};
@@ -103,15 +194,15 @@ document.querySelectorAll(".nav a").forEach(a=>a.onclick=e=>{e.preventDefault();
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
 async function loadProfiles(){const d=await api("/api/profiles");S.profiles=d.profiles||[];const sel=$("profileSelect"),old=S.profile;sel.innerHTML="";S.profiles.forEach(p=>{const o=document.createElement("option");o.value=p.name;o.textContent=(p.label||p.name)+" · "+(p.active?"онлайн":p.status||"оффлайн");sel.append(o)});S.profile=S.profiles.some(p=>p.name===old)?old:(S.profiles[0]||{}).name||"";sel.value=S.profile;const auth=$("authProfile");auth.innerHTML=S.profiles.filter(p=>p.name!=="default").map(p=>'<option value="'+esc(p.name)+'">'+esc(p.label||p.name)+'</option>').join("");connected(!!S.profile);$("profileStatus").textContent=(S.profiles.find(p=>p.name===S.profile)||{}).status||"Нет профиля";drawAccounts()}
 async function connect(){const t=token();if(!t)throw new Error("Введи токен доступа");localStorage.setItem("circles_web_token",t);$("token").value=t;await loadProfiles();if(!S.profile)throw new Error("Нет доступных профилей");await loadDashboard();toast("Панель подключена","success")}
-$("connect").onclick=()=>connect().catch(e=>toast(e.message,"error"));
+$("connect").onclick=()=>withButton($("connect"),"Подключаю…",connect).catch(e=>toast(e.message,"error"));
 $("profileSelect").onchange=()=>{S.profile=$("profileSelect").value;S.chatPage=0;S.recipientPage=0;S.chatSelected.clear();S.recipientSelected.clear();S.recipientInitialized=false;if(S.profile){loadDashboard();loadSettings()}};
-$("refreshAll").onclick=()=>loadDashboard().catch(e=>toast(e.message,"error"));
-async function loadDashboard(){need();const d=await api(url("/dashboard")),s=await api("/api/system"),c=d.catalog||{},b=d.broadcast||{},disk=d.disk||{};$("ovChats").textContent=fmt(c.total);$("ovChatHint").textContent=c.last_scan?"Сканировано "+new Date(c.last_scan*1000).toLocaleString("ru-RU"):"Нужна синхронизация";$("ovGroups").textContent=fmt(c.groups)+" / "+fmt(c.channels);$("ovSent").textContent=fmt(b.life_ok);$("ovWaves").textContent=fmt(b.life_waves)+" завершённых волн";$("ovDisk").textContent=bytes(disk.free);$("ovDiskHint").textContent="из "+bytes(disk.total);$("healthSession").textContent="Подключена";$("healthArchive").textContent=d.archive.paused?"На паузе":"Работает";$("healthBroadcast").textContent=b.status||"Нет данных";$("healthAccounts").textContent=fmt(s.profiles_online);$("ovCampaign").textContent=b.status||"Движок недоступен";$("ovScan").textContent=c.last_scan?fmt(c.total)+" записей":"Каталог не загружен"}
+$("refreshAll").onclick=()=>withButton($("refreshAll"),"Обновляю…",loadDashboard).catch(e=>toast(e.message,"error"));
+async function loadDashboard(){need();const [d,s]=await Promise.all([api(url("/dashboard")),api("/api/system")]);const c=d.catalog||{},b=d.broadcast||{},disk=d.disk||{};$("ovChats").textContent=fmt(c.total);$("ovChatHint").textContent=c.last_scan?"Сканировано "+new Date(c.last_scan*1000).toLocaleString("ru-RU"):"Нужна синхронизация";$("ovGroups").textContent=fmt(c.groups)+" / "+fmt(c.channels);$("ovSent").textContent=fmt(b.life_ok);$("ovWaves").textContent=fmt(b.life_waves)+" завершённых волн";$("ovDisk").textContent=bytes(disk.free);$("ovDiskHint").textContent="из "+bytes(disk.total);$("healthSession").textContent="Подключена";$("healthArchive").textContent=d.archive.paused?"На паузе":"Работает";$("healthBroadcast").textContent=b.status||"Нет данных";$("healthAccounts").textContent=fmt(s.profiles_online);$("ovCampaign").textContent=b.status||"Движок недоступен";$("ovScan").textContent=c.last_scan?fmt(c.total)+" записей":"Каталог не загружен"}
 async function loadChatStats(){need();const d=await api(url("/summary"));$("chatTotal").textContent=fmt(d.total);$("chatGroups").textContent=fmt(d.groups);$("chatChannels").textContent=fmt(d.channels);$("chatProtected").textContent=fmt(d.protected)}
 function drawChats(items){const el=$("chatList");el.innerHTML="";if(!items.length){el.innerHTML='<div class="empty"><b>Ничего не найдено</b>Измени фильтры или выполни сканирование.</div>';return}items.forEach(x=>{const row=document.createElement("div"),protect=!!x.protected||!!x.is_scam;row.className="chatrow";row.innerHTML='<input type="checkbox" '+(S.chatSelected.has(Number(x.chat_id))?"checked":"")+' '+(protect?"disabled":"")+'><div><div class="chatname">'+esc(x.title||"(без названия)")+'</div><div class="chatmeta">'+esc(x.username?"@"+x.username+" · ":"")+"ID "+esc(x.chat_id)+" · "+esc(x.category||"uncertain")+'</div></div><span class="chatstatus pill '+(protect?"warn":"good")+'">'+(protect?(x.is_scam?"Scam/Fake":"Защищён"):"Доступен")+'</span><button class="btn sm '+(protect?"":"danger")+'" '+(protect?"disabled":"")+'>'+(protect?"Защита":"Выйти")+'</button>';const cb=row.querySelector("input");cb.onchange=()=>{cb.checked?S.chatSelected.add(Number(x.chat_id)):S.chatSelected.delete(Number(x.chat_id));$("chatSelected").textContent=S.chatSelected.size};row.querySelector("button").onclick=()=>singleLeave(x,row);el.append(row)})}
 async function loadChats(){need();const q=new URLSearchParams({limit:String(PAGE),offset:String(S.chatPage*PAGE),query:$("chatSearch").value,peer_type:$("chatKind").value,category:$("chatCategory").value});const d=await api(url("/dialogs")+"?"+q);S.chatTotal=d.total;drawChats(d.items||[]);$("chatMeta").textContent=fmt(d.total)+" чатов в каталоге";$("chatPage").textContent=d.total?"Показано "+(S.chatPage*PAGE+1)+"–"+Math.min((S.chatPage+1)*PAGE,d.total)+" из "+d.total:"Нет записей";$("chatPrev").disabled=S.chatPage===0;$("chatNext").disabled=(S.chatPage+1)*PAGE>=d.total}
 $("reloadChats").onclick=()=>{S.chatPage=0;loadChats().catch(e=>toast(e.message,"error"))};$("chatPrev").onclick=()=>{S.chatPage=Math.max(0,S.chatPage-1);loadChats().catch(e=>toast(e.message,"error"))};$("chatNext").onclick=()=>{S.chatPage++;loadChats().catch(e=>toast(e.message,"error"))};
-async function scanChats(){need();$("scanChats").disabled=true;$("scanChats").textContent="Сканирую…";try{const a=await api(url("/scan"),{method:"POST",body:"{}"});let r;do{await new Promise(ok=>setTimeout(ok,1000));r=await api("/api/scans/"+a.scan_id)}while(r.status==="running");if(r.status!=="completed")throw new Error(r.error||"Сканирование не завершено");const x=r.result||{};toast((x.partial?"Частичный результат: ":"Сканирование завершено: ")+fmt(x.scanned)+" диалогов"+(x.warning?" · "+x.warning:""),x.partial?"error":"success");S.chatPage=0;await Promise.all([loadChatStats(),loadChats(),loadDashboard()])}catch(e){toast(e.message,"error")}finally{$("scanChats").disabled=false;$("scanChats").textContent="↻ Сканировать все диалоги"}}
+async function scanChats(){need();$("scanChats").disabled=true;$("scanChats").textContent="Сканирую…";try{const a=await api(url("/scan"),{method:"POST",body:"{}"});let r;const deadline=Date.now()+15*60*1000;do{await new Promise(ok=>setTimeout(ok,1200));r=await api("/api/scans/"+a.scan_id);if(r.status==="running"&&Date.now()>deadline)throw new Error("Сканирование длится больше 15 минут. Проверь журнал и состояние сервиса.")}while(r.status==="running");if(r.status!=="completed")throw new Error(r.error||"Сканирование не завершено");const x=r.result||{};toast((x.partial?"Частичный результат: ":"Сканирование завершено: ")+fmt(x.scanned)+" диалогов"+(x.warning?" · "+x.warning:""),x.partial?"error":"success");S.chatPage=0;await Promise.all([loadChatStats(),loadChats(),loadDashboard()])}catch(e){toast(e.message,"error")}finally{$("scanChats").disabled=false;$("scanChats").textContent="↻ Сканировать все диалоги"}}
 $("scanChats").onclick=scanChats;
 function askModal(title,text,label,placeholder){S.modalRequireInput=true;$("modalTitle").textContent=title;$("modalText").textContent=text;$("modalLabel").textContent=label;$("modalInputField").style.display="";$("modalInput").value="";$("modalInput").placeholder=placeholder||"";$("modalConfirm").textContent="Подтвердить";$("confirmModal").showModal();return new Promise(resolve=>S.modalResolve=resolve)}
 function askConfirm(title,text,confirmLabel="Подтвердить"){S.modalRequireInput=false;$("modalTitle").textContent=title;$("modalText").textContent=text;$("modalInputField").style.display="none";$("modalInput").value="";$("modalConfirm").textContent=confirmLabel;$("confirmModal").showModal();return new Promise(resolve=>S.modalResolve=resolve)}
@@ -120,7 +211,7 @@ $("confirmModal").addEventListener("cancel",e=>{e.preventDefault();$("confirmMod
 $("modalConfirm").onclick=()=>{$("confirmModal").close();if(S.modalResolve)S.modalResolve(S.modalRequireInput?$("modalInput").value:true)};
 async function singleLeave(x,row){const v=await askConfirm("Выйти из чата?","Аккаунт выйдет из чата «"+x.title+"». После успешного выхода чат исчезнет из каталога и списка получателей.","Выйти");if(!v)return;try{row.classList.add("row-loading");const b=row.querySelector("button");if(b){b.disabled=true;b.textContent="Выходим"}const r=await api(url("/leave"),{method:"POST",body:JSON.stringify({chat_id:Number(x.chat_id)})});await pollJob(r.job_id)}catch(e){row.classList.remove("row-loading");const b=row.querySelector("button");if(b){b.disabled=false;b.textContent="Выйти"}toast(e.message,"error")}}
 $("bulkLeave").onclick=async()=>{if(!S.chatSelected.size)return toast("Сначала отметь чаты");try{const r=await api(url("/preview"),{method:"POST",body:JSON.stringify({chat_ids:[...S.chatSelected]})});const v=await askConfirm("Подтвердить выход из чатов","Будет обработано "+r.count+" чатов. Защищено от выхода: "+((r.protected||[]).length)+". Продолжить?","Выйти");if(!v)return;const job=await api(url("/execute"),{method:"POST",body:JSON.stringify({preview_id:r.preview_id,confirmation:r.confirmation})});pollJob(job.job_id)}catch(e){toast(e.message,"error")}};
-async function pollJob(id){try{let d;do{await new Promise(ok=>setTimeout(ok,900));d=await api(url("/jobs/"+id))}while(d.status==="running");const r=d.result||d;const leftIds=Array.isArray(r.done_ids)?r.done_ids.slice():[];if(d.chat_id&&Number(r.completed||0)>0)leftIds.push(Number(d.chat_id));leftIds.forEach(cid=>{S.chatSelected.delete(Number(cid));S.recipientSelected.delete(Number(cid))});updateRecipientCount();toast(d.status==="failed"?(d.error||"Ошибка"):("Успешно вышли: "+(r.completed||0)+", ошибок: "+(r.failed||0)+", осталось: "+(r.remaining||0)),d.status==="failed"?"error":"success");S.chatSelected.clear();await Promise.all([loadChatStats(),loadChats()]);if(leftIds.length){S.recipientPage=0;S.recipientInitialized=false;await loadRecipients(true)}}catch(e){toast(e.message,"error")}}
+async function pollJob(id){try{let d;const deadline=Date.now()+15*60*1000;do{await new Promise(ok=>setTimeout(ok,1200));d=await api(url("/jobs/"+id));if(d.status==="running"&&Date.now()>deadline)throw new Error("Операция длится больше 15 минут. Задача продолжает выполняться; проверь журнал позже.")}while(d.status==="running");const r=d.result||d;const leftIds=Array.isArray(r.done_ids)?r.done_ids.slice():[];if(d.chat_id&&Number(r.completed||0)>0)leftIds.push(Number(d.chat_id));leftIds.forEach(cid=>{S.chatSelected.delete(Number(cid));S.recipientSelected.delete(Number(cid))});updateRecipientCount();toast(d.status==="failed"?(d.error||"Ошибка"):("Успешно вышли: "+(r.completed||0)+", ошибок: "+(r.failed||0)+", осталось: "+(r.remaining||0)),d.status==="failed"?"error":"success");S.chatSelected.clear();await Promise.all([loadChatStats(),loadChats()]);if(leftIds.length){S.recipientPage=0;S.recipientInitialized=false;await loadRecipients(true)}}catch(e){toast(e.message,"error")}}
 async function loadBroadcast(){try{need();const d=await api(url("/broadcast"));$("bcStatus").textContent=d.status;$("bcStatus").className="pill "+(d.running?"good":"warn");$("bcSent").textContent=fmt(d.life_ok);$("bcFailed").textContent=fmt(d.life_fail);$("bcWaves").textContent=fmt(d.life_waves);$("bcRecipientsCount").textContent=fmt(d.selected_recipients);$("bcInterval").value=d.interval||60;$("bcProgress").style.width=d.pending_total?Math.min(100,100*d.pending_completed/d.pending_total)+"%":"0%";$("bcProgressText").textContent=d.pending_total?(d.pending_completed+" из "+d.pending_total+" · осталось "+d.pending_remaining):"Ожидание запуска";$("selectedPostInfo").textContent=d.post?("Пост #"+d.post.id+" · "+(d.post.media?"медиа":"текст")+(d.post.pinned?" · закреплён":"")+"\n"+(d.post.text||"")):"Пост не выбран или отсутствует";$("bcHistory").innerHTML=(d.history||[]).slice().reverse().map(x=>'<div class="historyrow"><span>'+(x.partial?"Частичная волна":"Волна")+" · "+esc(x.ok||0)+" отправлено · "+esc(x.fail||0)+" ошибок</span><b>"+(x.t?new Date(x.t*1000).toLocaleString("ru-RU"):"—")+"</b></div>").join("")||'<div class="empty">История пока пуста</div>';$("stopBc").disabled=!d.running}catch(e){toast(e.message,"error")}}
 $("loadPosts").onclick=async()=>{try{const d=await api(url("/saved-posts"));S.savedPosts=d.posts||[];$("postList").innerHTML=S.savedPosts.map(x=>'<div class="postitem"><div class="posttext"><b>Пост #'+x.id+(x.media?" · медиа":"")+'</b><p>'+esc(x.text||"(без текста)")+'</p><div class="smalltext">'+esc(x.date||"")+'</div></div><button class="btn sm">Выбрать</button></div>').join("")||'<div class="empty">В Избранном нет сообщений</div>';Array.from($("postList").querySelectorAll("button")).forEach((b,i)=>b.onclick=async()=>{try{const x=S.savedPosts[i];const d=await api(url("/broadcast/post"),{method:"POST",body:JSON.stringify({post_id:x.id})});$("selectedPostInfo").textContent="Выбран пост #"+d.post.id;toast("Пост выбран","success");loadBroadcast()}catch(e){toast(e.message,"error")}})}catch(e){toast(e.message,"error")}};
 async function loadRecipients(refresh){try{need();const q=new URLSearchParams({limit:String(REC_PAGE),offset:String(S.recipientPage*REC_PAGE),refresh:refresh?"1":"0"});const d=await api(url("/broadcast/recipients")+"?"+q);S.recipientTotal=d.total;S.recipientItems=d.items||[];if(!S.recipientInitialized){S.recipientSelected=new Set(d.selected_ids||[]);S.recipientInitialized=true;S.recipientDirty=false}drawRecipients()}catch(e){$("recipientList").innerHTML='<div class="empty">'+esc(e.message)+'</div>'}}
@@ -138,10 +229,9 @@ $("executeMediaCleanup").onclick=async()=>{const p=S.mediaCleanupPreview;if(!p||
 async function loadArchiveCatalog(){
  try{
   need();
-  const summary=await api(url("/archive/summary"));
-  $("arTopics").textContent=fmt(summary.topics);$("arTotal").textContent=fmt(summary.total);$("arSent").textContent=fmt(summary.sent);$("arPending").textContent=fmt(summary.pending);
   const q=new URLSearchParams({limit:"50",offset:String(S.archivePage*50),query:$("archivePeopleSearch").value});
-  const data=await api(url("/archive/people")+"?"+q);
+  const [summary,data]=await Promise.all([api(url("/archive/summary")),api(url("/archive/people")+"?"+q)]);
+  $("arTopics").textContent=fmt(summary.topics);$("arTotal").textContent=fmt(summary.total);$("arSent").textContent=fmt(summary.sent);$("arPending").textContent=fmt(summary.pending);
   $("archivePeople").innerHTML=(data.items||[]).map(x=>'<div class="chatrow"><div class="pill">'+fmt(x.media_count)+'</div><div><div class="chatname">'+esc(x.title||("User "+x.user_id))+'</div><div class="chatmeta">ID '+esc(x.user_id)+' · отправлено '+fmt(x.sent_count)+' · ожидают '+fmt(x.pending_count)+' · последнее '+esc(x.last_media||"—")+'</div></div><span class="chatstatus pill good">Архив</span><button class="btn sm" data-user="'+esc(x.user_id)+'">Медиа</button></div>').join("")||'<div class="empty">В архиве пока нет тем.</div>';
   Array.from($("archivePeople").querySelectorAll("[data-user]")).forEach(b=>b.onclick=()=>{S.archiveUser=Number(b.dataset.user);S.archiveMediaPage=0;loadArchivePersonMedia()});
   $("archivePeoplePage").textContent=data.total?((S.archivePage*50+1)+"–"+Math.min((S.archivePage+1)*50,data.total)+" из "+data.total):"Нет тем";
@@ -160,14 +250,14 @@ async function loadArchivePersonMedia(){
  }catch(e){toast(e.message,"error")}
 }
 $("refreshArchiveCatalog").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};
-$("searchArchivePeople").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};
+$("searchArchivePeople").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};let archiveSearchTimer=null;$("archivePeopleSearch").oninput=()=>{clearTimeout(archiveSearchTimer);archiveSearchTimer=setTimeout(()=>{S.archivePage=0;loadArchiveCatalog()},300)};
 $("archivePeoplePrev").onclick=()=>{S.archivePage=Math.max(0,S.archivePage-1);loadArchiveCatalog()};
 $("archivePeopleNext").onclick=()=>{S.archivePage++;loadArchiveCatalog()};
 $("archiveMediaPrev").onclick=()=>{S.archiveMediaPage=Math.max(0,S.archiveMediaPage-1);loadArchivePersonMedia()};
 $("archiveMediaNext").onclick=()=>{S.archiveMediaPage++;loadArchivePersonMedia()};
 function settingsPayload(){return {broadcast_delay_min:Number($("setDelayMin").value),broadcast_delay_max:Number($("setDelayMax").value),broadcast_long_pause_chance:Number($("setLongPause").value),low_disk_percent:Number($("setDiskLimit").value),broadcast_auto_subscribe_gap_seconds:Number($("setSubGap").value),broadcast_auto_subscribe_daily_limit:Number($("setSubDaily").value),broadcast_auto_subscribe_max_per_message:Number($("setSubMessage").value),broadcast_auto_subscribe_batch_size:Number($("setSubBatch").value),broadcast_auto_subscribe_batch_pause_minutes:Number($("setSubRest").value),broadcast_notify_waves:$("setNotify").checked,broadcast_autostart:$("setAutostart").checked,broadcast_spambot:$("setSpamBot").checked,broadcast_auto_subscribe:$("setAutoSub").checked,save_outgoing:$("setSaveOutgoing").checked,info_message:$("setInfoMessage").checked,keep_local:$("setKeepLocal").checked}}
-$("saveSettings").onclick=async()=>{try{await api(url("/settings"),{method:"PATCH",body:JSON.stringify(settingsPayload())});toast("Настройки сохранены","success");loadSettings()}catch(e){toast(e.message,"error")}};$("reloadSettings").onclick=loadSettings;
-$("saveArchive").onclick=async()=>{const types=[];if($("mediaRound").checked)types.push("round_video");if($("mediaPhoto").checked)types.push("photo");if($("mediaVideo").checked)types.push("video");try{await api(url("/settings"),{method:"PATCH",body:JSON.stringify({paused:$("archivePaused").checked,save_outgoing:$("archiveOutgoing").checked,info_message:$("archiveInfo").checked,keep_local:$("archiveLocal").checked,archive_media_types:types,target_chat_id:Number($("archiveTarget").value||0)})});toast("Настройки архиватора сохранены","success");loadDashboard()}catch(e){toast(e.message,"error")}};
+$("saveSettings").onclick=()=>withButton($("saveSettings"),"Сохраняю…",async()=>{await api(url("/settings"),{method:"PATCH",body:JSON.stringify(settingsPayload())});toast("Настройки сохранены","success");await loadSettings()}).catch(e=>toast(e.message,"error"));$("reloadSettings").onclick=()=>loadSettings().catch(e=>toast(e.message,"error"));
+$("saveArchive").onclick=()=>withButton($("saveArchive"),"Сохраняю…",async()=>{const types=[];if($("mediaRound").checked)types.push("round_video");if($("mediaPhoto").checked)types.push("photo");if($("mediaVideo").checked)types.push("video");await api(url("/settings"),{method:"PATCH",body:JSON.stringify({paused:$("archivePaused").checked,save_outgoing:$("archiveOutgoing").checked,info_message:$("archiveInfo").checked,keep_local:$("archiveLocal").checked,archive_media_types:types,target_chat_id:Number($("archiveTarget").value||0)})});toast("Настройки архиватора сохранены","success");await loadDashboard()}).catch(e=>toast(e.message,"error"));
 function drawAccounts(){$("accountList").innerHTML=S.profiles.map(p=>'<div class="accountitem"><div class="accounttext"><b>'+esc(p.label||p.name)+'</b><div class="smalltext">'+esc(p.name)+" · "+esc(p.status)+'</div></div><span class="pill '+(p.active?"good":"warn")+'">'+(p.active?"Онлайн":"Оффлайн")+'</span><div class="toolbar">'+(p.can_start?'<button class="btn sm" data-start="'+esc(p.name)+'">Запустить</button>':"")+(p.can_stop?'<button class="btn sm danger" data-stop="'+esc(p.name)+'">Остановить</button>':"")+'</div></div>').join("")||'<div class="empty">Профили отсутствуют</div>';Array.from($("accountList").querySelectorAll("[data-start]")).forEach(b=>b.onclick=async()=>{try{await api("/api/profiles/"+b.dataset.start+"/start",{method:"POST",body:"{}"});toast("Профиль запускается");loadProfiles()}catch(e){toast(e.message,"error")}});Array.from($("accountList").querySelectorAll("[data-stop]")).forEach(b=>b.onclick=async()=>{try{await api("/api/profiles/"+b.dataset.stop+"/stop",{method:"POST",body:"{}"});toast("Профиль остановлен");loadProfiles()}catch(e){toast(e.message,"error")}})}
 $("reloadProfiles").onclick=()=>loadProfiles().catch(e=>toast(e.message,"error"));$("createProfile").onclick=async()=>{try{const name=$("newProfileName").value.trim();await api("/api/accounts",{method:"POST",body:JSON.stringify({name})});toast("Профиль создан");await loadProfiles();$("authProfile").value=name}catch(e){toast(e.message,"error")}};
 $("sendLoginCode").onclick=async()=>{try{const name=$("authProfile").value;if(!name)throw new Error("Сначала создай профиль");const d=await api("/api/profiles/"+name+"/login/start",{method:"POST",body:JSON.stringify({phone:$("authPhone").value})});$("authMessage").textContent=d.message;toast(d.message,"success")}catch(e){$("authMessage").textContent=e.message;toast(e.message,"error")}};
@@ -180,11 +270,20 @@ boot();
 setInterval(()=>{
  if(document.hidden||!token()||!S.profile)return;
  const active=document.querySelector(".page.active");
- if(active&&active.id==="page-broadcast"){loadBroadcast().catch(()=>{});if(Date.now()-S.lastRecipientPoll>15000){S.lastRecipientPoll=Date.now();loadRecipients(false).catch(()=>{})}}
- else if(active&&active.id==="page-overview")loadDashboard().catch(()=>{});
- else if(active&&active.id==="page-chats"&&Date.now()-S.lastChatPoll>12000){S.lastChatPoll=Date.now();Promise.all([loadChatStats(),loadChats()]).catch(()=>{})}
- else if(active&&active.id==="page-archive"&&Date.now()-S.lastArchivePoll>20000){S.lastArchivePoll=Date.now();loadArchiveCatalog().catch(()=>{})}
- else if(active&&active.id==="page-accounts"&&Date.now()-S.lastProfilePoll>15000){S.lastProfilePoll=Date.now();loadProfiles().catch(()=>{})}
- else if(active&&active.id==="page-logs"&&$("logAuto").checked)loadLogs().catch(()=>{});
-},5000);
+ const editing=document.activeElement&&/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName);
+ if(active&&active.id==="page-broadcast"){
+  loadBroadcast().catch(()=>{});
+  if(!S.recipientDirty&&document.activeElement!==$("recipientSearch")&&Date.now()-S.lastRecipientPoll>30000){
+   S.lastRecipientPoll=Date.now();loadRecipients(false).catch(()=>{});
+  }
+ }else if(active&&active.id==="page-overview")loadDashboard().catch(()=>{});
+ else if(active&&active.id==="page-chats"&&Date.now()-S.lastChatPoll>20000){
+  S.lastChatPoll=Date.now();loadChatStats().catch(()=>{});
+  if(!editing&&!S.chatSelected.size)loadChats().catch(()=>{});
+ }else if(active&&active.id==="page-archive"&&Date.now()-S.lastArchivePoll>30000&&!editing){
+  S.lastArchivePoll=Date.now();loadArchiveCatalog().catch(()=>{});
+ }else if(active&&active.id==="page-accounts"&&Date.now()-S.lastProfilePoll>30000&&!editing){
+  S.lastProfilePoll=Date.now();loadProfiles().catch(()=>{});
+ }else if(active&&active.id==="page-logs"&&$("logAuto").checked)loadLogs().catch(()=>{});
+},8000);
 </script></body></html>
