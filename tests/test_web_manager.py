@@ -286,4 +286,157 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+
+    def test_select_all_recipients_includes_groups_and_channels_but_excludes_unavailable(self):
+        async def run():
+            import json
+            with tempfile.TemporaryDirectory() as td:
+                config_path = Path(td) / "config.json"
+                cfg = {"_config_path": str(config_path), "data_dir": td,
+                       "broadcast_allowlist": [], "broadcast_allowlist_only": False}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    def __init__(self):
+                        self.statuses = {101: "ok", 202: "ok", 303: "ban", 404: "ex"}
+                    async def chat_list(self, refresh=False):
+                        return [(101, "Group"), (202, "Broadcast channel"),
+                                (303, "Blocked group"), (404, "Excluded channel")]
+                    def chat_status(self, chat_id):
+                        return self.statuses[int(chat_id)]
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/recipients", runtime.set_recipients)
+                app.router.add_get("/api/profiles/{name}/broadcast/recipients", runtime.recipients)
+                client = TestClient(TestServer(app)); await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    response = await client.post("/api/profiles/default/broadcast/recipients",
+                                                 headers=headers, json={"select_all": True})
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["selected_ids"], [101, 202])
+                    self.assertEqual(data["selected_count"], 2)
+                    self.assertEqual(data["available_count"], 2)
+                    self.assertEqual(data["excluded_count"], 2)
+                    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertEqual(persisted["broadcast_allowlist"], [101, 202])
+                    self.assertTrue(persisted["broadcast_allowlist_only"])
+                    listed = await client.get("/api/profiles/default/broadcast/recipients",
+                                              headers=headers)
+                    listed_data = await listed.json()
+                    self.assertEqual(listed_data["selected_ids"], [101, 202])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_media_cleanup_only_deletes_old_unreferenced_files(self):
+        async def run():
+            import os
+            import sqlite3
+            import time
+            with tempfile.TemporaryDirectory() as td:
+                data_dir = Path(td)
+                videos = data_dir / "videos" / "42"
+                videos.mkdir(parents=True)
+                referenced = videos / "archived_photo.jpg"
+                orphan = videos / "orphan_video.mp4"
+                temporary = videos / "download.mp4.part"
+                recent = videos / "recent_video.mp4"
+                for path in (referenced, orphan, temporary, recent):
+                    path.write_bytes(b"test-media")
+                old_time = time.time() - 25 * 60 * 60
+                for path in (referenced, orphan, temporary):
+                    os.utime(path, (old_time, old_time))
+                db = sqlite3.connect(data_dir / "circles.db")
+                db.execute("CREATE TABLE circles(file_path TEXT)")
+                db.execute("INSERT INTO circles(file_path) VALUES(?)", (str(referenced),))
+                db.commit()
+                db.close()
+
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, data_dir)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/media/cleanup/scan", runtime.media_cleanup_scan)
+                app.router.add_post("/api/profiles/{name}/media/cleanup/execute", runtime.media_cleanup_execute)
+                client = TestClient(TestServer(app)); await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    scanned = await client.get("/api/profiles/default/media/cleanup/scan",
+                                               headers=headers)
+                    self.assertEqual(scanned.status, 200)
+                    preview = await scanned.json()
+                    self.assertEqual(preview["referenced_files"], 1)
+                    self.assertEqual(preview["candidate_count"], 2)
+                    self.assertEqual(preview["candidate_bytes"], orphan.stat().st_size + temporary.stat().st_size)
+                    wrong = await client.post("/api/profiles/default/media/cleanup/execute",
+                                              headers=headers,
+                                              json={"preview_id": preview["preview_id"],
+                                                    "confirmation": "DELETE_ORPHANS 3"})
+                    self.assertEqual(wrong.status, 400)
+                    deleted = await client.post("/api/profiles/default/media/cleanup/execute",
+                                                headers=headers,
+                                                json={"preview_id": preview["preview_id"],
+                                                      "confirmation": "DELETE_ORPHANS 2"})
+                    self.assertEqual(deleted.status, 200)
+                    result = await deleted.json()
+                    self.assertEqual(result["deleted"], 2)
+                    self.assertTrue(referenced.exists())
+                    self.assertTrue(recent.exists())
+                    self.assertFalse(orphan.exists())
+                    self.assertFalse(temporary.exists())
+                finally:
+                    await client.close()
+                    await runtime.stop()
+
+        asyncio.run(run())
+
+    def test_broadcast_log_api_parses_levels_and_filters(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, Path(td))
+                log_path = Path(td) / "broadcast.log"
+                log_path.write_text(
+                    "2026-11-22 10:00:00 INFO sent to group\\n"
+                    "2026-11-22 10:00:01 WARNING retry after flood wait\\n"
+                    "2026-11-22 10:00:02 ERROR failed to send\\n",
+                    encoding="utf-8",
+                )
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/logs", runtime.logs)
+                client = TestClient(TestServer(app)); await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    response = await client.get(
+                        "/api/profiles/default/logs?kind=broadcast&level=ERROR", headers=headers)
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["count"], 1)
+                    self.assertEqual(data["entries"][0]["level"], "ERROR")
+                    self.assertEqual(data["counts"]["INFO"], 1)
+                    self.assertEqual(data["counts"]["WARNING"], 1)
+                    self.assertEqual(data["counts"]["ERROR"], 1)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
 if __name__ == '__main__': unittest.main()
