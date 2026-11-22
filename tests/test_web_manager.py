@@ -152,8 +152,6 @@ class WebManagerTests(unittest.TestCase):
         asyncio.run(run())
 
 
-if __name__ == '__main__': unittest.main()
-
     def test_web_control_settings_recipients_and_explicit_broadcast(self):
         async def run():
             import json
@@ -286,3 +284,5 @@ if __name__ == '__main__': unittest.main()
                     await client.close()
                     await runtime.stop()
         asyncio.run(run())
+
+if __name__ == '__main__': unittest.main()
