@@ -415,9 +415,9 @@ class WebManagerTests(unittest.TestCase):
                 runtime.register_profile("default", FakeClient(), {}, Path(td))
                 log_path = Path(td) / "broadcast.log"
                 log_path.write_text(
-                    "2026-11-22 10:00:00 INFO sent to group\\n"
-                    "2026-11-22 10:00:01 WARNING retry after flood wait\\n"
-                    "2026-11-22 10:00:02 ERROR failed to send\\n",
+                    "2026-11-22 10:00:00 INFO sent to group\n"
+                    "2026-11-22 10:00:01 WARNING retry after flood wait\n"
+                    "2026-11-22 10:00:02 ERROR failed to send\n",
                     encoding="utf-8",
                 )
                 app = web.Application(middlewares=[runtime.auth_middleware])
