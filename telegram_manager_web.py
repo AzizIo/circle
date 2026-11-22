@@ -61,7 +61,7 @@ class TelegramManagerRuntime:
         self.scan_tasks: dict[str, asyncio.Task] = {}
         self.scan_results: dict[str, dict] = {}
         self.media_cleanup_previews: dict[str, dict] = {}
-        self.job_tasks: dict[str, asyncio.Task] =
+        self.job_tasks: dict[str, asyncio.Task] = {}
         self.profile_tasks: dict[str, set[asyncio.Task]] = {}
         self.account_manager: Any = None
         self.runner: web.AppRunner | None = None
@@ -616,7 +616,7 @@ class TelegramManagerRuntime:
             fh.seek(0, os.SEEK_END)
             remaining = fh.tell()
             chunks = bytearray()
-            while remaining > 0 and chunks.count(b"\\n") <= limit and len(chunks) < max_bytes:
+            while remaining > 0 and chunks.count(b"\n") <= limit and len(chunks) < max_bytes:
                 size = min(65536, remaining, max_bytes - len(chunks))
                 remaining -= size
                 fh.seek(remaining)
@@ -626,12 +626,12 @@ class TelegramManagerRuntime:
 
     @staticmethod
     def _log_entry(raw: str) -> dict:
-        match = re.search(r"\\b(CRITICAL|ERROR|WARNING|WARN|INFO|DEBUG)\\b", raw, re.IGNORECASE)
+        match = re.search(r"\b(CRITICAL|ERROR|WARNING|WARN|INFO|DEBUG)\b", raw, re.IGNORECASE)
         level = (match.group(1).upper() if match else "INFO")
         if level == "WARN":
             level = "WARNING"
         timestamp = ""
-        stamp = re.match(r"^\\s*(\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)", raw)
+        stamp = re.match(r"^\s*(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?)", raw)
         if stamp:
             timestamp = stamp.group(1)
         message = raw[match.end():].strip(" :-|") if match else raw
