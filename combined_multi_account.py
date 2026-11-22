@@ -1809,10 +1809,6 @@ class Broadcaster:
             if self._slow_until.get(e.id, 0) > now:
                 n_slow += 1
                 continue
-            # The web control center can switch this profile to explicit-recipient mode.
-            # In that mode only IDs deliberately selected in the UI are eligible.
-            if allowlist_only and int(e.id) not in allowlist:
-                continue
             # No administrator check: Telegram enforces real send permissions when
             # forward() runs. Forbidden chats are recorded and skipped individually.
             chats.append(e)
