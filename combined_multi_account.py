@@ -1832,7 +1832,7 @@ class Broadcaster:
             # No administrator check: Telegram enforces real send permissions when
             # forward() runs. Forbidden chats are recorded and skipped individually.
             chats.append(e)
-        blog.info("Чатов для рассылки: %s (всего групп %s; пропущено: чёрный список %s, медленный режим %s, исключения %s)",
+        blog.info("Групп для рассылки: %s (всего групп %s; пропущено: чёрный список %s, медленный режим %s, исключения %s)",
                   len(chats), len(groups), n_skip, n_slow, len(excl))
         return chats
 
