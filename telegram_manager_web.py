@@ -60,7 +60,8 @@ class TelegramManagerRuntime:
         self.broadcasters: dict[str, Any] = {}
         self.scan_tasks: dict[str, asyncio.Task] = {}
         self.scan_results: dict[str, dict] = {}
-        self.job_tasks: dict[str, asyncio.Task] = {}
+        self.media_cleanup_previews: dict[str, dict] = {}
+        self.job_tasks: dict[str, asyncio.Task] =
         self.profile_tasks: dict[str, set[asyncio.Task]] = {}
         self.account_manager: Any = None
         self.runner: web.AppRunner | None = None
@@ -223,6 +224,8 @@ class TelegramManagerRuntime:
         app.router.add_get("/api/profiles/{name}/archive/summary", self.archive_summary)
         app.router.add_get("/api/profiles/{name}/archive/people", self.archive_people)
         app.router.add_get("/api/profiles/{name}/archive/people/{user_id}/media", self.archive_person_media)
+        app.router.add_get("/api/profiles/{name}/media/cleanup/scan", self.media_cleanup_scan)
+        app.router.add_post("/api/profiles/{name}/media/cleanup/execute", self.media_cleanup_execute)
         app.router.add_get("/api/profiles/{name}/broadcast", self.broadcast_status)
         app.router.add_get("/api/profiles/{name}/saved-posts", self.saved_posts)
         app.router.add_post("/api/profiles/{name}/broadcast/post", self.select_broadcast_post)
@@ -271,13 +274,13 @@ class TelegramManagerRuntime:
         return web.Response(text=INDEX_HTML, content_type="text/html", charset="utf-8")
 
     async def health(self, request):
-        return web.json_response({"ok": True, "version": "3.8.0"})
+        return web.json_response({"ok": True, "version": "3.9.0"})
 
     async def system(self, request):
         disk_path = self.base_dir
         usage = shutil.disk_usage(disk_path)
         return web.json_response({
-            "ok": True, "version": "3.8.0", "uptime_seconds": int(time.time() - self.started_at),
+            "ok": True, "version": "3.9.0", "uptime_seconds": int(time.time() - self.started_at),
             "disk_total": usage.total, "disk_free": usage.free,
             "profiles_online": len(self.clients),
         })
@@ -604,6 +607,36 @@ class TelegramManagerRuntime:
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"Записи медиа недоступны: {type(exc).__name__}")
 
+    @staticmethod
+    def _tail_log_lines(path: Path, limit: int, max_bytes: int = 2 * 1024 * 1024) -> list[str]:
+        """Read only the tail of a log; never load an unbounded log file into RAM."""
+        if not path.is_file():
+            return []
+        with path.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            remaining = fh.tell()
+            chunks = bytearray()
+            while remaining > 0 and chunks.count(b"\\n") <= limit and len(chunks) < max_bytes:
+                size = min(65536, remaining, max_bytes - len(chunks))
+                remaining -= size
+                fh.seek(remaining)
+                chunks[:0] = fh.read(size)
+        lines = bytes(chunks).decode("utf-8", errors="replace").splitlines()
+        return lines[-limit:]
+
+    @staticmethod
+    def _log_entry(raw: str) -> dict:
+        match = re.search(r"\\b(CRITICAL|ERROR|WARNING|WARN|INFO|DEBUG)\\b", raw, re.IGNORECASE)
+        level = (match.group(1).upper() if match else "INFO")
+        if level == "WARN":
+            level = "WARNING"
+        timestamp = ""
+        stamp = re.match(r"^\\s*(\\d{4}-\\d{2}-\\d{2}[T ]\\d{2}:\\d{2}:\\d{2}(?:[.,]\\d+)?(?:Z|[+-]\\d{2}:?\\d{2})?)", raw)
+        if stamp:
+            timestamp = stamp.group(1)
+        message = raw[match.end():].strip(" :-|") if match else raw
+        return {"raw": raw, "timestamp": timestamp, "level": level, "message": message}
+
     async def logs(self, request):
         name = request.match_info["name"]
         self._get_profile(name)
@@ -617,10 +650,185 @@ class TelegramManagerRuntime:
         filename = "circles.log" if kind == "app" else "broadcast.log"
         path = self.data_dirs[name] / filename
         try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-limit:] if path.exists() else []
+            lines = await asyncio.to_thread(self._tail_log_lines, path, limit)
         except OSError as exc:
             raise web.HTTPServiceUnavailable(text=f"Не удалось прочитать журнал: {type(exc).__name__}")
-        return web.json_response({"kind": kind, "path": filename, "lines": lines, "count": len(lines)})
+        all_entries = [self._log_entry(line) for line in lines]
+        counts = {key: sum(1 for entry in all_entries if entry["level"] == key)
+                  for key in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")}
+        query = request.query.get("q", "").strip().casefold()[:160]
+        level = request.query.get("level", "ALL").upper()
+        if level not in {"ALL", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
+            raise web.HTTPBadRequest(text="Неизвестный уровень журнала")
+        entries = [entry for entry in all_entries
+                   if (level == "ALL" or entry["level"] == level)
+                   and (not query or query in entry["raw"].casefold())]
+        return web.json_response({"kind": kind, "path": filename, "lines": [x["raw"] for x in entries],
+                                  "entries": entries, "count": len(entries),
+                                  "total_count": len(all_entries), "counts": counts})
+
+    def _media_inventory_sync(self, name: str) -> dict:
+        """Inventory only files under videos/; keep every path referenced by circles.db."""
+        import sqlite3
+        import stat as stat_module
+
+        data_dir = self.data_dirs[name]
+        root = (data_dir / "videos").resolve()
+        if not root.exists() or not root.is_dir():
+            return {"root": str(root), "total_files": 0, "total_bytes": 0,
+                    "referenced_files": 0, "candidate_count": 0, "candidate_bytes": 0,
+                    "orphan_count": 0, "temporary_count": 0, "samples": [], "candidates": []}
+
+        db_path = data_dir / "circles.db"
+        referenced: set[str] = set()
+        has_catalog = db_path.is_file()
+        if has_catalog:
+            conn = None
+            try:
+                conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
+                if "file_path" in columns:
+                    for (raw_path,) in conn.execute(
+                        "SELECT file_path FROM circles WHERE file_path IS NOT NULL AND file_path<>''"
+                    ):
+                        try:
+                            referenced.add(os.path.normcase(os.path.realpath(str(raw_path))))
+                        except (OSError, ValueError):
+                            continue
+            except sqlite3.Error as exc:
+                raise RuntimeError(f"Не удалось проверить ссылки в circles.db: {type(exc).__name__}") from exc
+            finally:
+                if conn is not None:
+                    conn.close()
+
+        total_files = total_bytes = referenced_files = 0
+        candidates = []
+        now = time.time()
+        temporary_suffixes = {".part", ".tmp", ".temp", ".download", ".partial"}
+        for current, dirs, files in os.walk(root, followlinks=False):
+            dirs[:] = [d for d in dirs if not (Path(current) / d).is_symlink()]
+            for filename in files:
+                path = Path(current) / filename
+                try:
+                    if path.is_symlink():
+                        continue
+                    st = path.stat(follow_symlinks=False)
+                    if not stat_module.S_ISREG(st.st_mode):
+                        continue
+                    resolved = path.resolve(strict=True)
+                    resolved.relative_to(root)
+                except (OSError, ValueError):
+                    continue
+                total_files += 1
+                total_bytes += int(st.st_size)
+                normalized = os.path.normcase(os.path.realpath(str(resolved)))
+                is_referenced = normalized in referenced
+                if is_referenced:
+                    referenced_files += 1
+                    continue
+                age = now - st.st_mtime
+                temporary = path.suffix.lower() in temporary_suffixes
+                orphan = has_catalog
+                # Do not touch recent files; the archiver may still be writing them.
+                if age < 3600 or not (temporary or orphan):
+                    continue
+                reason = "Временный / незавершённый файл" if temporary else "Нет ссылки в circles.db"
+                candidates.append({"path": str(resolved), "name": str(path.relative_to(root)),
+                                   "size": int(st.st_size), "mtime_ns": int(st.st_mtime_ns),
+                                   "reason": reason, "kind": "temporary" if temporary else "orphan"})
+        candidates.sort(key=lambda x: (x["kind"] != "temporary", -x["size"], x["name"].casefold()))
+        return {"root": str(root), "total_files": total_files, "total_bytes": total_bytes,
+                "referenced_files": referenced_files, "candidate_count": len(candidates),
+                "candidate_bytes": sum(x["size"] for x in candidates),
+                "orphan_count": sum(x["kind"] == "orphan" for x in candidates),
+                "temporary_count": sum(x["kind"] == "temporary" for x in candidates),
+                "samples": [{k: item[k] for k in ("name", "size", "reason", "kind")}
+                            for item in candidates[:30]],
+                "candidates": candidates}
+
+    async def media_cleanup_scan(self, request):
+        name = request.match_info["name"]
+        self._get_profile(name)
+        try:
+            inventory = await asyncio.to_thread(self._media_inventory_sync, name)
+        except (OSError, RuntimeError) as exc:
+            raise web.HTTPServiceUnavailable(text=str(exc))
+        preview_id = secrets.token_urlsafe(18)
+        self.media_cleanup_previews[preview_id] = {
+            "profile": name, "created_at": time.time(), "candidates": inventory.pop("candidates", [])
+        }
+        # Expired previews are discarded opportunistically.
+        cutoff = time.time() - 900
+        self.media_cleanup_previews = {
+            key: value for key, value in self.media_cleanup_previews.items()
+            if value.get("created_at", 0) >= cutoff
+        }
+        inventory["preview_id"] = preview_id
+        inventory["expires_in_seconds"] = 900
+        inventory["confirmation"] = f"DELETE_ORPHANS {inventory['candidate_count']}"
+        return web.json_response(inventory)
+
+    def _media_cleanup_delete_sync(self, name: str, snapshots: list[dict]) -> dict:
+        """Re-scan and compare inode metadata before deleting previewed orphan/temp files."""
+        current = self._media_inventory_sync(name)
+        current_by_path = {item["path"]: item for item in current["candidates"]}
+        root = (self.data_dirs[name] / "videos").resolve()
+        deleted = failed = deleted_bytes = 0
+        for snapshot in snapshots:
+            candidate = current_by_path.get(snapshot.get("path"))
+            if not candidate or candidate["size"] != snapshot.get("size") or candidate["mtime_ns"] != snapshot.get("mtime_ns"):
+                continue
+            path = Path(candidate["path"])
+            try:
+                if path.is_symlink():
+                    continue
+                path.resolve(strict=True).relative_to(root)
+                st = path.stat(follow_symlinks=False)
+                if int(st.st_size) != int(snapshot["size"]) or int(st.st_mtime_ns) != int(snapshot["mtime_ns"]):
+                    continue
+                path.unlink()
+                deleted += 1
+                deleted_bytes += int(st.st_size)
+                parent = path.parent
+                while parent != root:
+                    try:
+                        parent.rmdir()
+                    except OSError:
+                        break
+                    parent = parent.parent
+            except (OSError, ValueError, KeyError):
+                failed += 1
+        return {"deleted": deleted, "failed": failed, "deleted_bytes": deleted_bytes,
+                "remaining_candidates": max(0, len(snapshots) - deleted - failed)}
+
+    async def media_cleanup_execute(self, request):
+        name = request.match_info["name"]
+        self._get_profile(name)
+        try:
+            payload = await request.json()
+            preview_id = str(payload.get("preview_id", ""))
+            preview = self.media_cleanup_previews.get(preview_id)
+            if not preview or preview.get("profile") != name:
+                raise ValueError("Предпросмотр очистки не найден или уже использован. Запусти сканирование заново.")
+            if time.time() - float(preview.get("created_at", 0)) > 900:
+                self.media_cleanup_previews.pop(preview_id, None)
+                raise ValueError("Предпросмотр истёк. Запусти сканирование заново.")
+            snapshots = preview.get("candidates", [])
+            if not snapshots:
+                raise ValueError("Нет безопасных файлов для очистки")
+            expected = f"DELETE_ORPHANS {len(snapshots)}"
+            confirmation = str(payload.get("confirmation", "")).strip()
+            if not secrets.compare_digest(confirmation, expected):
+                raise ValueError(f"Для подтверждения введи точно: {expected}")
+            result = await asyncio.to_thread(self._media_cleanup_delete_sync, name, snapshots)
+            self.media_cleanup_previews.pop(preview_id, None)
+            log.info("Media cleanup profile=%s deleted=%s failed=%s bytes=%s",
+                     name, result["deleted"], result["failed"], result["deleted_bytes"])
+            return web.json_response({"ok": True, **result})
+        except (ValueError, TypeError) as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+        except (OSError, RuntimeError) as exc:
+            raise web.HTTPServiceUnavailable(text=str(exc))
 
     async def broadcast_status(self, request):
         name = request.match_info["name"]
@@ -668,7 +876,7 @@ class TelegramManagerRuntime:
         chats = await bc.chat_list(refresh=refresh)
         try:
             offset = max(0, int(request.query.get("offset", "0")))
-            limit = max(1, min(300, int(request.query.get("limit", "100"))))
+            limit = max(1, min(3000, int(request.query.get("limit", "100"))))
         except ValueError:
             raise web.HTTPBadRequest(text="Некорректная пагинация")
         cfg = self.configs[name]
@@ -696,19 +904,26 @@ class TelegramManagerRuntime:
         bc = self._get_broadcaster(name)
         try:
             payload = await request.json()
-            raw_ids = payload.get("chat_ids")
-            if not isinstance(raw_ids, list) or len(raw_ids) > 3000:
-                raise ValueError("chat_ids должен быть списком максимум из 3000 чатов")
-            ids = []
-            for raw in raw_ids:
-                if isinstance(raw, bool):
-                    raise ValueError("Некорректный ID чата")
-                cid = int(raw)
-                if cid == 0:
-                    raise ValueError("Некорректный ID чата")
-                ids.append(cid)
-            ids = list(dict.fromkeys(ids))
-            live = {int(cid) for cid, _ in await bc.chat_list(refresh=True)}
+            if payload.get("select_all") is True:
+                live_chats = await bc.chat_list(refresh=True)
+                ids = [int(cid) for cid, _ in live_chats if bc.chat_status(int(cid)) == "ok"]
+                if len(ids) > 3000:
+                    raise ValueError("В аккаунте больше 3000 доступных чатов. Используй фильтры и выбор страницами.")
+                live = {int(cid) for cid, _ in live_chats}
+            else:
+                raw_ids = payload.get("chat_ids")
+                if not isinstance(raw_ids, list) or len(raw_ids) > 3000:
+                    raise ValueError("chat_ids должен быть списком максимум из 3000 чатов")
+                ids = []
+                for raw in raw_ids:
+                    if isinstance(raw, bool):
+                        raise ValueError("Некорректный ID чата")
+                    cid = int(raw)
+                    if cid == 0:
+                        raise ValueError("Некорректный ID чата")
+                    ids.append(cid)
+                ids = list(dict.fromkeys(ids))
+                live = {int(cid) for cid, _ in await bc.chat_list(refresh=True)}
             unknown = [cid for cid in ids if cid not in live]
             if unknown:
                 raise ValueError(f"Среди выбранных есть чаты, которых нет в текущем аккаунте: {len(unknown)}")
@@ -716,9 +931,29 @@ class TelegramManagerRuntime:
             cfg["broadcast_allowlist"] = ids
             cfg["broadcast_allowlist_only"] = True
             self._save_config(cfg)
-            return web.json_response({"ok": True, "selected_count": len(ids), "allowlist_only": True})
+            return web.json_response({"ok": True, "selected_count": len(ids), "selected_ids": ids,
+                                      "available_count": sum(1 for cid in live if bc.chat_status(cid) == "ok"),
+                                      "excluded_count": len(live) - sum(1 for cid in live if bc.chat_status(cid) == "ok"),
+                                      "allowlist_only": True})
         except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
+
+    def _prune_left_recipients(self, name: str, chat_ids) -> None:
+        """Keep the explicit recipient allowlist synchronized after a successful leave."""
+        ids = {int(x) for x in (chat_ids or [])}
+        if not ids:
+            return
+        cfg = self.configs.get(name)
+        if cfg is None:
+            return
+        current = cfg.get("broadcast_allowlist") or []
+        kept = [int(x) for x in current if int(x) not in ids]
+        if len(kept) != len(current):
+            cfg["broadcast_allowlist"] = kept
+            self._save_config(cfg)
+        bc = self.broadcasters.get(name)
+        if bc is not None and hasattr(bc, "chat_cache"):
+            bc.chat_cache = [(int(cid), title) for cid, title in bc.chat_cache if int(cid) not in ids]
 
     async def start_broadcast(self, request):
         name = request.match_info["name"]
@@ -824,6 +1059,7 @@ class TelegramManagerRuntime:
                 try:
                     result = await cleaner.execute(client, preview_id=preview_id,
                                                    confirmation="LEAVE 1", delay_seconds=2, max_actions=1)
+                    self._prune_left_recipients(name, result.get("done_ids", []))
                     self.scan_results[task_id] = {"status": "completed", "result": result,
                                                   "chat_id": chat_id, "title": title}
                 except asyncio.CancelledError:
@@ -876,6 +1112,7 @@ class TelegramManagerRuntime:
                 try:
                     self.scan_results[task_id] = {"status": "running"}
                     result = await cleaner.execute(client, preview_id=preview_id, confirmation=confirmation)
+                    self._prune_left_recipients(name, result.get("done_ids", []))
                     self.scan_results[task_id] = {"status": "completed", "result": result}
                 except Exception as exc:
                     saved = cleaner.job(preview_id)
