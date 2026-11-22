@@ -1,7 +1,8 @@
 # Credentials and local configuration
 .env
 config.json
-accounts/*/config.json
+accounts/
+data/
 
 # Telegram authorization material — NEVER commit
 *.session
@@ -10,8 +11,6 @@ Sessions/
 sessions/
 
 # Runtime data, queues and databases
-data/
-accounts/*/data/
 manager_data/
 *.db
 *.db-shm
@@ -41,6 +40,3 @@ __pycache__/
 .coverage
 htmlcov/
 .DS_Store
-
-# Local test/cache artifacts
-.pytest_cache/
