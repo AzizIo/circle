@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.4 — Server & Archive Performance
+
+- Added a descending composite index for archive media pagination by user/date/message.
+- Added compact logs API responses for the web panel, avoiding duplicate raw log payloads while preserving the legacy response by default.
+- Synchronized the app version label and runtime version metadata.
+
+
 ## 3.9.3 — Workspace UX & Responsiveness
 
 - Added client-side GET request coalescing and a 30-second request timeout with readable errors.
