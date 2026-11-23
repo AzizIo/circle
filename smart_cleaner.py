@@ -414,7 +414,9 @@ class SmartCleaner:
     @staticmethod
     def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
-        d["scores"] = json.loads(d.pop("scores_json", "{}") or "{}")
+        scores_json = d.pop("scores_json", None)
+        if scores_json is not None:
+            d["scores"] = json.loads(scores_json or "{}")
         d["protected"] = bool(d.get("protected_reason"))
         return d
 
