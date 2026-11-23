@@ -427,3 +427,13 @@ def test_broadcast_panel_has_explicit_uncertain_delivery_review_controls():
     assert 'data-uncertain-action="delivered"' in html
     assert 'data-uncertain-action="retry"' in html
     assert 'url("/broadcast/uncertain")' in html
+
+
+def test_web_broadcast_status_treats_finalizing_task_as_busy():
+    source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
+    body = _block(source, "    def _broadcast_view(", "    async def dashboard(")
+    assert 'task = getattr(bc, "task", None)' in body
+    assert 'task is not None and not task.done()' in body
+    assert '"running": worker_busy' in body
+    start = _block(source, "    async def start_broadcast(", "    async def resolve_broadcast_uncertain(")
+    assert 'task is not None and not task.done()' in start
