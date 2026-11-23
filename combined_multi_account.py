@@ -3026,7 +3026,15 @@ class Broadcaster:
                 messages = result if isinstance(result, (list, tuple)) else [result]
                 confirmed = any(item is not None and getattr(item, "id", None) for item in messages)
                 if not confirmed:
+                    blog.warning("Telegram не вернул Message ID для чата %s; результат отправки неизвестен", name)
                     return False, "uncertain"
+                sent_message = next(
+                    item for item in messages if item is not None and getattr(item, "id", None)
+                )
+                blog.info(
+                    "Telegram подтвердил пересылку: chat_id=%s source_message_id=%s sent_message_id=%s",
+                    int(chat.id), int(getattr(msg, "id", 0) or 0), int(sent_message.id),
+                )
                 self._consec_spam = 0
                 return True, ""
             except errors.FloodWaitError as e:
@@ -3148,6 +3156,73 @@ class Broadcaster:
             # duplicate window after a VPS crash because later successes would not persist.
             raise OSError("Не удалось сохранить checkpoint очереди рассылки")
 
+    def resolve_uncertain_delivery(self, chat_id: int, action: str) -> dict:
+        """Resolve one ambiguous send only after an explicit owner decision.
+
+        action='delivered' closes the destination as owner-confirmed delivered.
+        action='retry' makes it eligible for a deliberate resend after review.
+        """
+        if action not in {"delivered", "retry"}:
+            raise ValueError("Действие должно быть delivered или retry")
+        pending = self.state.get("pending_wave")
+        if not isinstance(pending, dict):
+            raise ValueError("Нет сохранённой волны для проверки")
+        try:
+            target_id = int(chat_id)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("Некорректный ID чата") from exc
+        unresolved = pending.get("uncertain_deliveries")
+        if not isinstance(unresolved, list):
+            unresolved = []
+        match = next((
+            item for item in unresolved
+            if isinstance(item, dict) and int(item.get("chat_id") or 0) == target_id
+        ), None)
+        if match is None:
+            raise ValueError("Для этого чата нет отправки, ожидающей проверки")
+
+        result = self._pending_result(pending)
+        result["fail"] = max(0, result["fail"] - 1)
+        if result["errors"].get("uncertain", 0) > 1:
+            result["errors"]["uncertain"] -= 1
+        else:
+            result["errors"].pop("uncertain", None)
+        title = str(match.get("title") or target_id)
+        removed_failed = False
+        kept_failed = []
+        for failed_name, failed_reason in result["failed"]:
+            if (not removed_failed and failed_reason == "uncertain"
+                    and failed_name == title):
+                removed_failed = True
+                continue
+            kept_failed.append((failed_name, failed_reason))
+        result["failed"] = kept_failed
+
+        completed = self._int_ids(pending.get("completed_ids", []))
+        if action == "delivered":
+            result["ok"] += 1
+            completed.add(target_id)
+        pending["uncertain_deliveries"] = [
+            item for item in unresolved
+            if not (isinstance(item, dict) and int(item.get("chat_id") or 0) == target_id)
+        ]
+        self.state["last_error"] = (
+            "uncertain_delivery: ещё требуется ручная проверка"
+            if pending["uncertain_deliveries"] else ""
+        )
+        self.state["next"] = 0.0
+        self._save_pending_progress(pending, result, completed)
+        return {
+            "chat_id": target_id,
+            "action": action,
+            "remaining_uncertain": len(pending["uncertain_deliveries"]),
+            "resume_available": bool(
+                not pending["uncertain_deliveries"]
+                and self.state.get("active") is True
+                and float(self.state.get("end") or 0) > time.time()
+            ),
+        }
+
     async def _restore_pending_chats(self, pending: dict) -> list:
         """Resolve only the still-pending chats; removed/excluded chats are checkpointed as skipped."""
         groups = await self._scan_dialogs()
@@ -3255,6 +3330,19 @@ class Broadcaster:
                     # lost. Keep the chat out of completed_ids and stop this wave;
                     # never silently report success or replay an ambiguous send.
                     if pending is not None:
+                        unresolved = pending.get("uncertain_deliveries")
+                        if not isinstance(unresolved, list):
+                            unresolved = []
+                        if not any(
+                            isinstance(item, dict) and int(item.get("chat_id") or 0) == chat_id
+                            for item in unresolved
+                        ):
+                            unresolved.append({
+                                "chat_id": chat_id,
+                                "title": name[:160],
+                                "detected_at": time.time(),
+                            })
+                        pending["uncertain_deliveries"] = unresolved[-100:]
                         self._save_pending_progress(pending, r, completed)
                     await self.notifier.alert(
                         "broadcast-uncertain",
@@ -3465,6 +3553,22 @@ class Broadcaster:
                             await self.alert("source-forward-stop", "🛑 Telegram запретил пересылать выбранный пост "
                                              "(возможно, исходное сообщение защищено от пересылки). Выбери другой пост.", 0)
                             reason = "source_restricted"
+                        elif self._fatal_reason == "uncertain_delivery":
+                            # Do not label a network acknowledgement loss as PeerFlood.
+                            # The uncertain chat remains pending until the owner reviews it.
+                            st["active"] = bool(float(st.get("end") or 0) > time.time())
+                            st["next"] = 0.0
+                            st["last_error"] = "uncertain_delivery: требуется ручная проверка результата отправки"
+                            if not self._save_state():
+                                raise OSError("Не удалось сохранить очередь с неопределённой отправкой")
+                            await self.alert(
+                                "broadcast-uncertain",
+                                "⚠️ Telegram не подтвердил результат одной отправки. Кампания остановлена, "
+                                "очередь сохранена. Открой раздел «Рассылка», проверь указанный чат и выбери "
+                                "«Уже доставлено» либо «Разрешить повтор после проверки».",
+                                0,
+                            )
+                            reason = "uncertain_delivery"
                         else:
                             # Account-level restrictions do not invalidate the remaining
                             # destinations. Preserve the exact post + unfinished chat IDs.
@@ -3538,7 +3642,7 @@ class Broadcaster:
                 elif reason in {"done", "stopped"}:
                     st["last_error"] = ""
                 recoverable_error = reason == "error" and st.get("active") is True and float(st.get("end") or 0) > time.time()
-                recoverable_account_pause = (reason in {"account_restricted", "spam"}
+                recoverable_account_pause = (reason in {"account_restricted", "spam", "uncertain_delivery"}
                                              and isinstance(st.get("pending_wave"), dict)
                                              and float(st.get("end") or 0) > time.time())
                 if recoverable_error or recoverable_account_pause:
@@ -3585,6 +3689,11 @@ class Broadcaster:
         """После перезапуска сервиса: если рассылка шла и время ещё не вышло - продолжаем."""
         st = self.state
         if self.running or not st.get("active"):
+            return False
+        pending = st.get("pending_wave")
+        unresolved = pending.get("uncertain_deliveries", []) if isinstance(pending, dict) else []
+        if isinstance(unresolved, list) and unresolved:
+            st["last_error"] = "uncertain_delivery: требуется ручная проверка результата отправки"
             return False
         if st["end"] <= time.time():
             st["active"] = False
@@ -3642,6 +3751,7 @@ class Broadcaster:
             "spam": "Telegram сообщил об ограничении аккаунта. Проверь уведомления Telegram и статус аккаунта; автоматический обход ограничения не выполняется.",
             "account_restricted": "Telegram ограничил действия этого аккаунта. Проверь уведомления Telegram и дождись снятия ограничения.",
             "source_restricted": "Telegram запретил использовать выбранное исходное сообщение. Выбери другое сообщение из «Избранного».",
+            "uncertain_delivery": "Результат одной отправки не подтверждён. Очередь остановлена до ручной проверки чата; повтор не будет выполнен автоматически.",
             "flood_expired": "Ограничение Telegram действует дольше оставшегося времени кампании. Проверь статус аккаунта перед новым запуском.",
         }.get(str(reason or ""), "")
 
