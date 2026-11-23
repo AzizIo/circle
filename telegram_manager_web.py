@@ -422,9 +422,9 @@ class TelegramManagerRuntime:
                 items.append({
                     "name": name, "label": cfg.get("account_label") or name,
                     "status": status, "active": connected, "running": running,
-                    "can_start": bool(self.account_manager and name != "default" and not running and not connected
+                    "can_start": bool(self.account_manager and not running and not connected
                                       and self.account_manager.has_session(name)),
-                    "can_stop": bool(self.account_manager and name != "default" and running),
+                    "can_stop": bool(self.account_manager and running),
                 })
         else:
             items = [{"name": n, "label": self.configs[n].get("account_label") or n,
