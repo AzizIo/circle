@@ -284,10 +284,13 @@ def test_broadcast_uncertain_delivery_is_not_completed_or_retried_blindly():
         "    def _record_wave(self, r, seconds, partial=False, partial_reason=\"\"):",
     )
     uncertain = body.index('if reason == "uncertain":')
-    save = body.index("self._save_pending_progress(pending, r, completed)", uncertain)
-    abort = body.index('self._fatal_reason = "uncertain_delivery"', uncertain)
-    assert uncertain < save < abort
-    assert "completed.add(chat_id)" not in body[uncertain:]
+    definite_rejection = body.index("# Definite Telegram rejections", uncertain)
+    branch = body[uncertain:definite_rejection]
+    save = branch.index("self._save_pending_progress(pending, r, completed)")
+    abort = branch.index('self._fatal_reason = "uncertain_delivery"')
+    assert save < abort
+    assert "completed.add(chat_id)" not in branch
+    assert 'pending["uncertain_deliveries"] = unresolved[-100:]' in branch
 
 
 def test_broadcast_only_counts_confirmed_telegram_message_ids_as_success():
@@ -305,3 +308,90 @@ def test_broadcast_only_counts_confirmed_telegram_message_ids_as_success():
     )
     assert 'r["ok"] += 1' in wave
     assert 'r["errors"][reason] += 1' in wave
+
+
+
+def test_uncertain_delivery_stops_as_a_distinct_recoverable_reason():
+    body = _block(
+        SOURCE,
+        "                    if self._fatal:",
+        '                    partial = has_remaining',
+    )
+    assert 'elif self._fatal_reason == "uncertain_delivery":' in body
+    assert 'reason = "uncertain_delivery"' in body
+    assert "PeerFlood" not in body.split('elif self._fatal_reason == "uncertain_delivery":', 1)[1].split("else:", 1)[0]
+    assert '"uncertain_delivery"' in _block(
+        SOURCE,
+        "    def terminal_reason_message(reason: str) -> str:",
+        "    def summary(self) -> str:",
+    )
+
+
+def test_broadcaster_resume_is_blocked_until_uncertain_delivery_is_reviewed():
+    body = _block(SOURCE, "    def resume(self) -> bool:", "    def stop(self):")
+    assert 'pending.get("uncertain_deliveries", [])' in body
+    assert "if isinstance(unresolved, list) and unresolved:" in body
+    assert "self._launch()" in body
+
+
+def test_resolve_uncertain_delivery_requires_owner_decision_and_updates_checkpoint():
+    from types import MethodType
+    import combined_multi_account as core
+
+    bc = object.__new__(core.Broadcaster)
+    pending = {
+        "chat_ids": [101, 202],
+        "completed_ids": [101],
+        "ok": 1,
+        "fail": 1,
+        "errors": {"uncertain": 1},
+        "failed": [("Test group", "uncertain")],
+        "uncertain_deliveries": [{"chat_id": 202, "title": "Test group", "detected_at": 1}],
+    }
+    bc.state = {"active": True, "end": 9999999999, "pending_wave": pending, "last_error": "uncertain"}
+    saved = []
+    def save_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+        saved.append(True)
+    bc._save_pending_progress = MethodType(save_progress, bc)
+
+    result = bc.resolve_uncertain_delivery(202, "delivered")
+    assert result["action"] == "delivered"
+    assert result["remaining_uncertain"] == 0
+    assert pending["completed_ids"] == [101, 202]
+    assert pending["ok"] == 2
+    assert pending["fail"] == 0
+    assert pending["errors"] == {}
+    assert pending["uncertain_deliveries"] == []
+    assert bc.state["last_error"] == ""
+    assert bc.state["next"] == 0
+    assert saved
+
+    try:
+        bc.resolve_uncertain_delivery(202, "retry")
+    except ValueError as exc:
+        assert "нет отправки" in str(exc).lower()
+    else:
+        raise AssertionError("A resolved destination must not be resolvable twice")
+
+
+def test_web_broadcast_status_exposes_uncertain_destinations_and_gates_resume():
+    source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
+    body = _block(source, "    def _broadcast_view(", "    async def dashboard(")
+    assert '"uncertain_deliveries": uncertain_deliveries' in body
+    assert "not uncertain_deliveries" in body
+    start = _block(source, "    async def start_broadcast(", "    async def resolve_broadcast_uncertain(")
+    assert 'pending.get("uncertain_deliveries", [])' in start
+
+
+def test_broadcast_panel_has_explicit_uncertain_delivery_review_controls():
+    html = (ROOT / "telegram_manager_panel.html").read_text(encoding="utf-8")
+    assert 'id="bcUncertainPanel"' in html
+    assert 'data-uncertain-action="delivered"' in html
+    assert 'data-uncertain-action="retry"' in html
+    assert 'url("/broadcast/uncertain")' in html
