@@ -123,7 +123,7 @@ def test_web_managed_profile_does_not_auto_resume_broadcast():
 def test_autosub_listener_attaches_only_for_active_campaign():
     attach = _block(SOURCE, "    def _attach_autosub_listener(", "    def _detach_autosub_listener")
     assert "self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)" in attach
-    detach = _block(SOURCE, "    def _detach_autosub_listener(self):", "    def _stop_autosub_worker")
+    detach = _block(SOURCE, "    def _detach_autosub_listener(", "    def _stop_autosub_worker")
     assert "self.client.remove_event_handler" in detach
     ensure = _block(SOURCE, "    def _ensure_autosub_worker(", "    async def _autosub_worker_loop")
     assert "not self.running or not self.state.get(\"active\")" in ensure
