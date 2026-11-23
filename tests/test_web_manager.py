@@ -633,6 +633,51 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('if(S.profile!==profile)return;r=await api("/api/scans/"+a.scan_id)', scan)
         self.assertIn('if(S.profile===profile)toast(e.message,"error")', scan)
 
+    def test_broadcast_start_returns_conflict_if_campaign_is_already_running(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                cfg = {"broadcast_allowlist_only": True, "broadcast_allowlist": [101]}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    running = True
+                    state = {"active": True}
+                    async def preview(self):
+                        raise AssertionError("Already-running campaign must be rejected before Telegram calls")
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/start", runtime.start_broadcast)
+                client = TestClient(TestServer(app)); await client.start_server()
+                try:
+                    response = await client.post(
+                        "/api/profiles/default/broadcast/start",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                        json={"confirmed": True, "recipient_ids": [101]},
+                    )
+                    self.assertEqual(response.status, 409)
+                    self.assertIn("уже выполняется", await response.text())
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_broadcast_start_button_tracks_running_and_recoverable_states(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        load = html[html.index("async function loadBroadcast()"):html.index('$("loadPosts").onclick=')]
+        self.assertIn("S.broadcastRunning=!!d.running;S.broadcastActive=!!d.active", load)
+        self.assertIn('$("startBc").disabled=S.broadcastRunning', load)
+        self.assertIn('S.broadcastRunning?"Кампания работает":(S.broadcastActive?"▶ Продолжить":"▶ Запустить")', load)
+        start = html[html.index('$("startBc").onclick=async()=>{'):html.index('$("stopBc").onclick=')]
+        self.assertIn('b.disabled=!!S.broadcastRunning', start)
+
     def test_broadcaster_exposes_clear_terminal_start_reasons(self):
         expected = {
             "nopost": "Избранном",
