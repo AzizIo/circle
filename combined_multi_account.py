@@ -3683,14 +3683,13 @@ async def check_health(client, ddir, cfg, notifier) -> list[str]:
 
 
 # =============================================================================
-#  Управление дополнительными аккаунтами из единой Telegram-панели
+#  Управление Telegram-аккаунтами из веб-панели
 # =============================================================================
 class AccountManager:
-    """Менеджер дополнительных пользовательских сессий.
+    """Owns all Telegram account sessions under the independent web control plane.
 
-    Главный профиль держит одну bot-панель. Дополнительные пользовательские
-    аккаунты работают отдельными Telethon-клиентами с независимыми файлами
-    сессий, конфигами, SQLite и каталогами данных.
+    The web host owns no Telegram session. Every profile, including default,
+    is started as a separately managed task with its own session lock.
     """
     def __init__(self, owner_id: int):
         self.owner_id = int(owner_id)
@@ -3703,7 +3702,7 @@ class AccountManager:
         self.auth_flows: dict[str, dict] = {}
         self.auth_timeout_tasks: dict[str, asyncio.Task] = {}
         self._logging_profiles: set[str] = set()
-        self.notify_fn = None  # shared owner-facing notifier from the primary control bot
+        self.notify_fn = None  # optional notifier hook; web control does not require a Telegram bot
 
     def set_notifier_send_fn(self, send_fn) -> None:
         self.notify_fn = send_fn
@@ -3801,7 +3800,7 @@ class AccountManager:
         if self.is_running(name):
             return True, "Аккаунт уже работает."
         if name in self.auth_flows:
-            return False, "Сначала заверши авторизацию в боте."
+            return False, "Сначала заверши авторизацию в веб-панели."
         cfg = read_profile_config(path)
         # Starting a profile must not silently change the owner's broadcast policy.
         # The current saved allowlist/exclusions and auto-subscribe choice are respected.
@@ -4003,7 +4002,7 @@ class AccountManager:
         client = flow["client"]
         try:
             me = await client.get_me()
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             cfg["account_label"] = display_name(me)
             cfg["owner_id"] = int(me.id)
             save_cfg(cfg)
@@ -6487,8 +6486,8 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
         if autostart_enabled:
             resumed = bc.resume()
         elif bc.state.get("active") and float(bc.state.get("end") or 0) > time.time():
-            log.info("Сохранённая рассылка оставлена на паузе: broadcast_autostart=false; "
-                     "для продолжения используй ручной запуск в панели")
+            log.info("Сохранённая рассылка оставлена на паузе: для веб-управляемого аккаунта "
+                     "требуется явный запуск кампании из панели")
         if not resumed:
             if broadcast is not None:
                 bc.start(*broadcast)
@@ -7257,7 +7256,7 @@ def menu():
 def main():
     global CONFIG_PATH
     ap = argparse.ArgumentParser(description="Архиватор медиа Telegram")
-    ap.add_argument("command", nargs="?", choices=["menu", "run", "login", "check", "backfill", "setup",
+    ap.add_argument("command", nargs="?", choices=["menu", "run", "web", "login", "check", "backfill", "setup",
                                                         "accounts", "add-account"])
     ap.add_argument("profile_name", nargs="?", help="имя для add-account")
     ap.add_argument("--profile", help="имя профиля аккаунта для login/check/backfill/run/menu")
