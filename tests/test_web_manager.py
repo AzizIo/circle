@@ -535,6 +535,7 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('Ожидаю подтверждение…', html)
         self.assertIn('Очистка отменена. Файлы не удалены.', html)
         self.assertIn('S.archiveUser=null', html)
+        self.assertIn('S.archiveUser=Number(b.dataset.user);S.archiveMediaPage=0;S.archiveMediaTotal=0;', html)
 
     def test_broadcast_recipient_lists_are_isolated_by_profile(self):
         async def run():
