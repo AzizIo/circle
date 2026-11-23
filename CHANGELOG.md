@@ -1,5 +1,15 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.9 — Clearer Actions & Collapsible Recipient List
+
+- Added a per-profile collapsible recipient panel with a chevron control; collapsed state persists across reloads and profile switches.
+- Kept the account identity, selected-recipient count, and action status visible while the recipient list is collapsed.
+- Added persistent inline progress/success/error feedback for recipient sync, select-all, save, campaign settings, and stop actions.
+- Added clear cancellation feedback and visible running states for long Smart Cleaner actions.
+- Corrected stop-button state refresh so it follows the actual server campaign status after a stop request.
+- Added regression coverage for recipient panel collapse persistence and action feedback.
+
+
 ## 3.9.8 — Account-Scoped Broadcast Workspace & Feedback
 
 - Persisted the selected Telegram profile across page reloads so the panel does not silently switch back to the first account.
