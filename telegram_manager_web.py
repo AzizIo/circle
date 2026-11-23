@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.11"
+APP_VERSION = "3.9.12"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -1148,7 +1148,7 @@ class TelegramManagerRuntime:
             post = await bc.preview()
             if not post:
                 raise ValueError("В Избранном нет доступного сообщения для рассылки")
-            live = {int(cid) for cid, _ in await bc.chat_list(refresh=True)}
+            live = {int(cid) for cid, _ in await self._validated_broadcast_chats(bc)}
             selected_ids = {int(x) for x in selected}
             if not selected_ids.issubset(live):
                 raise ValueError("Список получателей изменился. Обнови чаты и сохрани выбор заново")
