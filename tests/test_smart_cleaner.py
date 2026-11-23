@@ -58,8 +58,10 @@ class SmartCleanerTests(unittest.TestCase):
                         "ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE "
                         "LIMIT ? OFFSET ?", ("crypto", "group", 100, 0),
                     ).fetchall()
-                    self.assertIn("idx_catalog_sort", " ".join(map(str, sort_plan)))
-                    self.assertIn("idx_catalog_category_peer_sort", " ".join(map(str, filtered_plan)))
+                    sort_details = " ".join(str(row[3]) for row in sort_plan)
+                    filtered_details = " ".join(str(row[3]) for row in filtered_plan)
+                    self.assertIn("idx_catalog_sort", sort_details)
+                    self.assertIn("idx_catalog_category_peer_sort", filtered_details)
 
                     result = await asyncio.to_thread(cleaner.list_catalog, category="crypto", peer_type="group")
                     self.assertEqual(result, {"total": 0, "items": []})
