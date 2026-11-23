@@ -280,6 +280,7 @@ function drawUncertainDeliveries(items,workerBusy){
  if(warning&&workerBusy)warning.textContent="Кампания завершает текущую операцию. Проверка станет доступна после её остановки.";
  else if(warning)warning.textContent="Telegram не подтвердил результат запроса. Проверь чат вручную: не повторяй отправку, пока не убедишься, что сообщения там нет.";
  list.innerHTML=rows.map(x=>'<div class="historyrow"><div><b>'+esc(x.title||("Чат "+x.chat_id))+'</b><div class="smalltext">ID '+esc(x.chat_id)+' · результат запроса неизвестен</div></div><div class="toolbar"><button class="btn sm" data-uncertain-action="delivered" data-chat-id="'+esc(x.chat_id)+'">Уже доставлено</button><button class="btn sm primary" data-uncertain-action="retry" data-chat-id="'+esc(x.chat_id)+'">Проверил — повторить</button></div></div>').join("");
+ list.querySelectorAll("button").forEach(button=>{button.disabled=!!workerBusy});
  list.querySelectorAll("[data-uncertain-action]").forEach(button=>button.onclick=async()=>{
   if(workerBusy){toast("Кампания ещё завершает остановку. Повтори проверку через несколько секунд.","warning");return}
   const chatId=Number(button.dataset.chatId),action=button.dataset.uncertainAction;
