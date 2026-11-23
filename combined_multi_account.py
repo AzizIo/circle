@@ -3540,9 +3540,13 @@ class Broadcaster:
             worker.cancel()
 
     def suspend(self):
-        """Остановить на время выключения сервиса: состояние сохраняется, после запуска продолжим."""
+        """Остановить кампанию при выключении сервиса, сохранив checkpoint и очередь."""
         self.suspending = True
         self.stop_event.set()
+        self._autosub_wakeup.set()
+        worker = self._autosub_worker_task
+        if worker and not worker.done():
+            worker.cancel()
 
     def set_interval(self, minutes):
         old_interval = max(1, int(self.state.get("interval", 60)))
