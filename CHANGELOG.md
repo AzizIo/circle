@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.21 — Primary Account & Pending Queue Diagnostics
+
+- Explicitly label profile `default` as the primary account in the Broadcast panel.
+- Expose how many IDs in a pending checkpoint are absent from the current recipient allowlist, split between already completed and still pending IDs.
+- Replace the generic pending-queue mismatch response with a count-based explanation while leaving the saved queue and recipient guard intact.
+- Added regression tests for primary-account identity and pending recipient mismatch diagnostics.
+
+
 ## 3.9.20 — Campaign Button State
 
 - Disable the launch button while the selected campaign is actively running; show its actual running state instead of allowing a duplicate start request.
