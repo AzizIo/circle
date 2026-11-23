@@ -60,7 +60,7 @@ def test_autosub_worker_is_campaign_scoped_and_queue_capture_is_durable():
     assert "self._stop_autosub_worker()" in stop
     suspend = _block(SOURCE, "    def suspend(self):", "    def set_interval(self")
     assert "self._stop_autosub_worker()" in suspend
-    stop_worker = _block(SOURCE, "    def _stop_autosub_worker(self):", "    def _ensure_autosub_worker")
+    stop_worker = _block(SOURCE, "    def _stop_autosub_worker(", "    def _ensure_autosub_worker")
     assert "self._detach_autosub_listener()" in stop_worker
     assert "worker.cancel()" in stop_worker
     finally_block = _block(SOURCE, "        finally:\n            await self.save_subs(force=True)", "    # ----- управление -----")
@@ -121,7 +121,7 @@ def test_web_managed_profile_does_not_auto_resume_broadcast():
 
 
 def test_autosub_listener_attaches_only_for_active_campaign():
-    attach = _block(SOURCE, "    def _attach_autosub_listener(self):", "    def _detach_autosub_listener")
+    attach = _block(SOURCE, "    def _attach_autosub_listener(", "    def _detach_autosub_listener")
     assert "self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)" in attach
     detach = _block(SOURCE, "    def _detach_autosub_listener(self):", "    def _stop_autosub_worker")
     assert "self.client.remove_event_handler" in detach
