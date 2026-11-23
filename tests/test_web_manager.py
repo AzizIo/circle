@@ -267,14 +267,17 @@ class WebManagerTests(unittest.TestCase):
 
                     wrong = await client.post(
                         "/api/profiles/default/broadcast/start", headers=headers,
-                        json={"confirmation": "START 2"},
+                        json={"confirmed": False, "recipient_ids": [101]},
                     )
                     self.assertEqual(wrong.status, 400)
                     started = await client.post(
                         "/api/profiles/default/broadcast/start", headers=headers,
-                        json={"confirmation": "START 1"},
+                        json={"confirmed": True, "recipient_ids": [101]},
                     )
                     self.assertEqual(started.status, 202)
+                    started_data = await started.json()
+                    self.assertEqual(started_data["selected_count"], 1)
+                    self.assertEqual(started_data["selected_ids"], [101])
                     self.assertEqual(bc.started, 1)
                     self.assertEqual(bc.chat_list_calls, [False, False, False])
 
@@ -743,6 +746,81 @@ class WebManagerTests(unittest.TestCase):
                     await client.close()
                     await runtime.stop()
         asyncio.run(run())
+
+    def test_broadcast_start_uses_current_allowlist_after_dialog_refresh(self):
+        async def run():
+            import time
+            with tempfile.TemporaryDirectory() as td:
+                config_path = Path(td) / "config.json"
+                cfg = {
+                    "_config_path": str(config_path), "broadcast_allowlist_only": True,
+                    "broadcast_allowlist": [101, 202],
+                }
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                class FakeBroadcaster:
+                    def __init__(self):
+                        self._dialogs_scanned_at = time.time() - 120
+                        self.state = {"active": False, "pending_wave": None, "post_id": 0}
+                        self.running = False
+                        self.progress = (0, 0)
+                        self.started = 0
+                    def short(self):
+                        return "выключена"
+                    async def preview(self):
+                        return {"id": 9, "text": "Preview", "media": False, "pinned": True}
+                    async def chat_list(self, refresh=False):
+                        if refresh:
+                            # Simulate Broadcaster pruning a group that is no longer present.
+                            cfg["broadcast_allowlist"] = [101]
+                            self._dialogs_scanned_at = time.time()
+                        return [(101, "Current group")]
+                    def start(self, interval, hours):
+                        self.started += 1
+                        self.running = True
+                        return True
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                bc = FakeBroadcaster()
+                runtime.register_broadcaster("default", bc)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/start", runtime.start_broadcast)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    response = await client.post(
+                        "/api/profiles/default/broadcast/start",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                        json={"confirmed": True, "recipient_ids": [101, 202]},
+                    )
+                    self.assertEqual(response.status, 202)
+                    data = await response.json()
+                    self.assertEqual(data["selected_count"], 1)
+                    self.assertEqual(data["selected_ids"], [101])
+                    self.assertEqual(cfg["broadcast_allowlist"], [101])
+                    self.assertEqual(bc.started, 1)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_panel_start_uses_one_click_confirmation_without_dynamic_count_code(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        start = html[html.index('$("startBc").onclick=async()=>{'):html.index('$("stopBc").onclick=async()=>{')]
+        self.assertIn('await askConfirm(', start)
+        self.assertIn('"Запустить кампанию?"', start)
+        self.assertIn('confirmed:true,recipient_ids:launchIds', start)
+        self.assertNotIn('askModal(', start)
+        self.assertNotIn('START "+saved.selected_count', start)
+        self.assertIn('selected_ids', start)
+        self.assertIn('Список получателей', start)
 
     def test_broadcast_start_reuses_recent_profile_dialog_validation(self):
         async def run():
