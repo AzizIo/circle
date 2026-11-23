@@ -191,50 +191,99 @@ class SmartCleaner:
             log.debug("full description unavailable for %s: %s", getattr(entity, "id", "?"), type(exc).__name__)
             return ""
 
-    async def scan(self, client: Any, *, sample_messages: int = 5, progress=None) -> dict[str, Any]:
-        """Scan dialogs once; enrich only uncertain titles with full info/history.
+    def _scan_cache_sync(self) -> dict[int, dict[str, Any]]:
+        """Read prior scan metadata without blocking the event loop."""
+        conn = self._read_connection()
+        try:
+            rows = conn.execute(
+                "SELECT chat_id,title,username,about,sample_text,scanned_at FROM catalog"
+            ).fetchall()
+            return {int(row["chat_id"]): dict(row) for row in rows}
+        finally:
+            conn.close()
 
-        This staged strategy avoids one history request per group when the title
-        already provides a strong classification, keeping large accounts snappy.
+    async def scan(self, client: Any, *, sample_messages: int = 5, progress=None) -> dict[str, Any]:
+        """Scan dialogs with staged enrichment, cached metadata and lightweight progress.
+
+        Titles and current entity metadata are always re-evaluated. Full descriptions
+        and message samples are reused for up to seven days when the dialog identity
+        (title + username) is unchanged, avoiding repeated Telegram requests on
+        routine resynchronization.
         """
         scanned = 0
         eligible = 0
+        dialogs_seen = 0
+        cache_hits = 0
         now = time.time()
         partial_reason = ""
+        cache_ttl = 7 * 24 * 60 * 60
+        cache = await asyncio.to_thread(self._scan_cache_sync)
         async with self._lock:
             try:
-                async for dialog in client.iter_dialogs():
+                iterator = client.iter_dialogs()
+                total_estimate = getattr(iterator, "total", None)
+                try:
+                    total_estimate = int(total_estimate) if total_estimate is not None else None
+                except (TypeError, ValueError):
+                    total_estimate = None
+                last_progress = time.monotonic()
+
+                async for dialog in iterator:
+                    dialogs_seen += 1
                     entity = getattr(dialog, "entity", None)
                     kind = _dialog_kind(dialog)
                     if entity is None or kind not in {"group", "channel"}:
+                        if progress and (dialogs_seen % 25 == 0 or time.monotonic() - last_progress >= 1.0):
+                            update = progress(dialogs_seen, scanned)
+                            if asyncio.iscoroutine(update):
+                                await update
+                            last_progress = time.monotonic()
                         continue
+
                     eligible += 1
                     title = _clean(getattr(dialog, "name", "") or getattr(entity, "title", ""), 512)
                     username = _clean(getattr(entity, "username", "") or "", 128).casefold()
+                    chat_id = int(getattr(dialog, "id", getattr(entity, "id")))
+                    cached = cache.get(chat_id)
+                    cache_valid = bool(
+                        cached
+                        and cached.get("title") == title
+                        and cached.get("username") == username
+                        and now - float(cached.get("scanned_at") or 0) <= cache_ttl
+                    )
                     about = _clean(getattr(entity, "about", "") or "", 2000)
+                    if not about and cache_valid:
+                        about = _clean(cached.get("about", ""), 2000)
+                        if about:
+                            cache_hits += 1
                     samples: list[str] = []
                     category, confidence, scores = classify_combined(title, username, about, ())
-                    # Ask for Telegram's full description only when name/available metadata
-                    # is ambiguous. Recent messages are the final evidence layer.
+                    # Ask Telegram only when title/available metadata is ambiguous.
                     if category == "uncertain" or confidence < 0.76:
                         if not about:
                             about = await self._fetch_about(client, entity, kind)
                         category, confidence, scores = classify_combined(title, username, about, ())
                     if category == "uncertain" and sample_messages > 0:
-                        try:
-                            async for message in client.iter_messages(entity, limit=max(0, min(int(sample_messages), 10))):
-                                body = _clean(getattr(message, "message", "") or "", 1000)
-                                if body:
-                                    samples.append(body)
-                        except Exception as exc:  # inaccessible history is not a catalog failure
-                            if self._is_rate_limit(exc):
-                                raise
-                            log.debug("recent-message sample unavailable for %s: %s", getattr(entity, "id", "?"), type(exc).__name__)
+                        cached_sample = _clean(cached.get("sample_text", ""), 6000) if cache_valid else ""
+                        if cached_sample:
+                            samples = [part.strip() for part in cached_sample.split(" | ") if part.strip()]
+                            samples = samples[:max(0, min(int(sample_messages), 10))]
+                            cache_hits += 1
+                        else:
+                            try:
+                                async for message in client.iter_messages(entity, limit=max(0, min(int(sample_messages), 10))):
+                                    body = _clean(getattr(message, "message", "") or "", 1000)
+                                    if body:
+                                        samples.append(body)
+                            except Exception as exc:  # inaccessible history is not a catalog failure
+                                if self._is_rate_limit(exc):
+                                    raise
+                                log.debug("recent-message sample unavailable for %s: %s", getattr(entity, "id", "?"), type(exc).__name__)
                         category, confidence, scores = classify_combined(title, username, about, samples)
+
                     creator = _safe_bool(entity, "creator")
                     admin = bool(getattr(entity, "admin_rights", None))
                     scam = _safe_bool(entity, "scam") or _safe_bool(entity, "fake")
-                    chat_id = int(getattr(dialog, "id", getattr(entity, "id")))
                     protected = "owner" if creator else "admin" if admin else "whitelist" if self._is_whitelisted(chat_id, title, username) else ""
                     last_date = getattr(dialog, "date", None)
                     last_iso = last_date.astimezone(timezone.utc).isoformat() if isinstance(last_date, datetime) else None
@@ -260,10 +309,13 @@ class SmartCleaner:
                     scanned += 1
                     if scanned % 25 == 0:
                         self.db.commit()
-                    if progress and scanned % 50 == 0:
-                        result = progress(scanned, eligible)
-                        if asyncio.iscoroutine(result):
-                            await result
+                    if progress and (dialogs_seen % 25 == 0 or time.monotonic() - last_progress >= 1.0):
+                        update = progress(dialogs_seen, scanned)
+                        if asyncio.iscoroutine(update):
+                            await update
+                        last_progress = time.monotonic()
+                    if dialogs_seen % 50 == 0:
+                        await asyncio.sleep(0)
             except asyncio.CancelledError:
                 self.db.commit()
                 raise
@@ -278,9 +330,24 @@ class SmartCleaner:
                 # Remove dialogs no longer present only after a complete scan.
                 self.db.execute("DELETE FROM catalog WHERE scanned_at < ?", (now,))
             self.db.commit()
-        counts = {row[0]: row[1] for row in self.db.execute("SELECT category,COUNT(*) FROM catalog GROUP BY category")}
-        return {"scanned": scanned, "eligible": eligible, "categories": counts,
-                "partial": bool(partial_reason), "warning": partial_reason, "scanned_at": now}
+
+        if progress:
+            update = progress(dialogs_seen, scanned)
+            if asyncio.iscoroutine(update):
+                await update
+        counts = await asyncio.to_thread(self._catalog_category_counts_sync)
+        return {"scanned": scanned, "eligible": eligible, "dialogs_seen": dialogs_seen,
+                "cache_hits": cache_hits, "total_estimate": total_estimate,
+                "categories": counts, "partial": bool(partial_reason),
+                "warning": partial_reason, "scanned_at": now}
+
+    def _catalog_category_counts_sync(self) -> dict[str, int]:
+        conn = self._read_connection()
+        try:
+            return {str(row[0]): int(row[1]) for row in
+                    conn.execute("SELECT category,COUNT(*) FROM catalog GROUP BY category")}
+        finally:
+            conn.close()
 
     def _is_whitelisted(self, chat_id: int, title: str, username: str) -> bool:
         title_l, username_l = title.casefold(), username.casefold()
@@ -293,7 +360,8 @@ class SmartCleaner:
         return False
 
     def list_catalog(self, *, category: str | None = None, query: str = "", peer_type: str | None = None,
-                     include_protected: bool = True, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+                     include_protected: bool = True, limit: int = 100, offset: int = 0,
+                     compact: bool = False) -> dict[str, Any]:
         where, args = [], []
         if category:
             where.append("category=?"); args.append(category)
@@ -305,10 +373,17 @@ class SmartCleaner:
         if not include_protected:
             where.append("protected_reason=''")
         clause = (" WHERE " + " AND ".join(where)) if where else ""
+        # The panel only needs display and protection fields. Keep the complete
+        # legacy row available to API clients unless compact=1 is requested.
+        columns = (
+            "chat_id,peer_type,title,username,category,confidence,is_creator,is_admin,is_scam,"
+            "unread_count,is_muted,is_archived,last_message_at,protected_reason,scanned_at,updated_at"
+            if compact else "*"
+        )
         conn = self._read_connection()
         try:
             total = conn.execute("SELECT COUNT(*) FROM catalog" + clause, args).fetchone()[0]
-            rows = conn.execute("SELECT * FROM catalog" + clause +
+            rows = conn.execute("SELECT " + columns + " FROM catalog" + clause +
                                 " ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE LIMIT ? OFFSET ?",
                                 (*args, max(1, min(int(limit), 500)), max(0, int(offset)))).fetchall()
             return {"total": total, "items": [self._row_dict(r) for r in rows]}
@@ -337,7 +412,7 @@ class SmartCleaner:
     @staticmethod
     def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
         d = dict(row)
-        d["scores"] = json.loads(d.pop("scores_json") or "{}")
+        d["scores"] = json.loads(d.pop("scores_json", "{}") or "{}")
         d["protected"] = bool(d.get("protected_reason"))
         return d
 
