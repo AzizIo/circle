@@ -3666,7 +3666,8 @@ class Broadcaster:
         self._ensure_autosub_worker()
 
     def start(self, interval_min, hours) -> bool:
-        if self.running:
+        task = getattr(self, "task", None)
+        if self.running or (task is not None and not task.done()):
             return False
         if self.state.get("active") and float(self.state.get("end") or 0) > time.time():
             # If a previous task stopped on an unexpected exception, Start means
@@ -3688,7 +3689,8 @@ class Broadcaster:
     def resume(self) -> bool:
         """После перезапуска сервиса: если рассылка шла и время ещё не вышло - продолжаем."""
         st = self.state
-        if self.running or not st.get("active"):
+        task = getattr(self, "task", None)
+        if self.running or (task is not None and not task.done()) or not st.get("active"):
             return False
         pending = st.get("pending_wave")
         unresolved = pending.get("uncertain_deliveries", []) if isinstance(pending, dict) else []
