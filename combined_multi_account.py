@@ -2402,9 +2402,9 @@ class Broadcaster:
             return
         try:
             self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)
+            self._autosub_listener_attached = True
             # Some bots edit the same requirement message to add/fix invite buttons.
             self.client.add_event_handler(self._on_mention, self._autosub_message_edited_event)
-            self._autosub_listener_attached = True
         except Exception:
             self._detach_autosub_listener()
             blog.exception("Не удалось включить сбор ссылок автоподписки")
