@@ -30,6 +30,99 @@ class WebManagerTests(unittest.TestCase):
                     await client.close()
         asyncio.run(run())
 
+    def test_create_account_route_validates_profile_and_reports_conflicts(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class Manager:
+                    def __init__(self): self.created = []
+                    def add_profile(self, name):
+                        if name == "taken":
+                            raise FileExistsError("Профиль 'taken' уже существует")
+                        self.created.append(name)
+                        return Path(td) / "accounts" / name / "config.json"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                manager = Manager()
+                runtime.set_account_manager(manager)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/accounts", runtime.create_account)
+                client = TestClient(TestServer(app)); await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    created = await client.post("/api/accounts", headers=headers, json={"name": "work-2"})
+                    self.assertEqual(created.status, 201)
+                    payload = await created.json()
+                    self.assertEqual(payload["name"], "work-2")
+                    self.assertIn("создан", payload["message"])
+                    self.assertEqual(manager.created, ["work-2"])
+
+                    invalid = await client.post("/api/accounts", headers=headers, json={"name": "../default"})
+                    self.assertEqual(invalid.status, 400)
+                    conflict = await client.post("/api/accounts", headers=headers, json={"name": "taken"})
+                    self.assertEqual(conflict.status, 409)
+                    non_object = await client.post("/api/accounts", headers=headers, data="[]",
+                                                   headers2=None) if False else None
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_login_routes_cover_code_2fa_done_and_invalid_payloads(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class Manager:
+                    async def begin_login(self, name, phone):
+                        return ("code", "Код отправлен") if name == "work" and phone else ("error", "Проверь телефон")
+                    async def submit_code(self, name, code):
+                        return ("password", "Нужен пароль 2FA") if code == "12345" else ("invalid", "Код не подошёл")
+                    async def submit_password(self, name, password):
+                        return ("done", "Аккаунт авторизован") if password == "valid" else ("invalid", "Пароль неверный")
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.set_account_manager(Manager())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/login/start", runtime.login_start)
+                app.router.add_post("/api/profiles/{name}/login/code", runtime.login_code)
+                app.router.add_post("/api/profiles/{name}/login/password", runtime.login_password)
+                client = TestClient(TestServer(app)); await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    sent = await client.post("/api/profiles/work/login/start", headers=headers, json={"phone": "+79990000000"})
+                    self.assertEqual(sent.status, 200)
+                    self.assertEqual((await sent.json())["stage"], "code")
+
+                    password = await client.post("/api/profiles/work/login/code", headers=headers, json={"code": "12345"})
+                    self.assertEqual(password.status, 200)
+                    self.assertEqual((await password.json())["stage"], "password")
+
+                    done = await client.post("/api/profiles/work/login/password", headers=headers, json={"password": "valid"})
+                    self.assertEqual(done.status, 200)
+                    self.assertEqual((await done.json())["stage"], "done")
+
+                    wrong = await client.post("/api/profiles/work/login/code", headers=headers, json={"code": "0"})
+                    self.assertEqual(wrong.status, 400)
+                    invalid_profile = await client.post("/api/profiles/default/login/code", headers=headers, json={"code": "123"})
+                    self.assertEqual(invalid_profile.status, 400)
+                    malformed = await client.post("/api/profiles/work/login/start", headers=headers, data="[]")
+                    self.assertEqual(malformed.status, 400)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_account_ui_keeps_auth_profile_and_allows_slow_telegram_login(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('path.includes("/login/")', html)
+        self.assertIn('localStorage.setItem("circles_auth_profile",auth.value)', html)
+        self.assertIn('const authExists=S.profiles.some(p=>p.name===oldAuth', html)
+        self.assertIn('result.message||("Профиль «"+name+"» создан.', html)
+        self.assertIn('if(d.stage==="password"){$("authPassword").focus()', html)
+        self.assertIn('if(d.stage==="done"){await loadProfiles();$("authProfile").value=name', html)
+
     def test_profiles_and_account_start_stop_routes(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
@@ -774,6 +867,8 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('withButton($("sendLoginCode"),"Отправляю…"', html)
         self.assertIn('withButton($("submitLoginCode"),"Проверяю код…"', html)
         self.assertIn('withButton($("submitLoginPassword"),"Проверяю 2FA…"', html)
+        self.assertIn('path.includes("/login/")', html)
+        self.assertIn('localStorage.setItem("circles_auth_profile",name)', html)
         self.assertIn("Авторизация завершена, но список профилей не обновлён", html)
         self.assertIn("Запрос запуска профиля", html)
         self.assertIn("Запрос остановки профиля", html)
