@@ -716,8 +716,10 @@ class WebManagerTests(unittest.TestCase):
         html = web_module.INDEX_HTML
         load = html[html.index("async function loadBroadcast()"):html.index('$("loadPosts").onclick=')]
         self.assertIn("S.broadcastRunning=!!d.running;S.broadcastActive=!!d.active", load)
-        self.assertIn('$("startBc").disabled=S.broadcastRunning', load)
-        self.assertIn('S.broadcastRunning?"Кампания работает":(S.broadcastActive?"▶ Продолжить":"▶ Запустить")', load)
+        self.assertIn('$("startBc").disabled=S.broadcastRunning||', load)
+        self.assertIn('S.broadcastRunning?"Кампания работает":', load)
+        self.assertIn('"▶ Продолжить"', load)
+        self.assertIn("savedQueueBlocked", load)
         start = html[html.index('$("startBc").onclick=async()=>{'):html.index('$("stopBc").onclick=')]
         self.assertIn('b.disabled=!!S.broadcastRunning', start)
 
