@@ -1086,10 +1086,15 @@ class TelegramManagerRuntime:
             cfg["broadcast_allowlist"] = ids
             cfg["broadcast_allowlist_only"] = True
             self._save_config(cfg)
-            return web.json_response({"ok": True, "selected_count": len(ids), "selected_ids": ids,
-                                      "available_count": sum(1 for cid in live if bc.chat_status(cid) == "ok"),
-                                      "excluded_count": len(live) - sum(1 for cid in live if bc.chat_status(cid) == "ok"),
-                                      "allowlist_only": True})
+            return web.json_response({
+                "ok": True, "profile": name,
+                "account_label": str(cfg.get("account_label") or name),
+                "account_id": int(cfg.get("owner_id") or 0),
+                "selected_count": len(ids), "selected_ids": ids,
+                "available_count": sum(1 for cid in live if bc.chat_status(cid) == "ok"),
+                "excluded_count": len(live) - sum(1 for cid in live if bc.chat_status(cid) == "ok"),
+                "allowlist_only": True,
+            })
         except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
 
