@@ -149,3 +149,15 @@ def test_archive_target_is_optional_for_web_managed_accounts():
     assert "account_cfg_problems(cfg)" in login
     host = _block(SOURCE, "async def run_web_manager_host(", "async def run_all_accounts(")
     assert "account_cfg_problems(cfg)" not in host
+
+
+def test_profile_auth_uses_profile_config_and_isolated_session_path():
+    manager = _block(SOURCE, "class AccountManager:", "#  Бот-панель")
+    begin = _block(manager, "    async def begin_login(", "    async def submit_code(")
+    finish = _block(manager, "    async def _finish_login(", "    async def _discard_auth(")
+    assert "profile_config_path(name)" in begin
+    assert "read_profile_config(path)" in begin
+    assert "cfg[\"_config_path\"]" in finish or "read_profile_config(self._profile_config_path(name))" in finish
+    assert "save_cfg(cfg)" in finish
+    assert "await client.disconnect()" in finish
+    assert "self.auth_flows.pop(name, None)" in finish
