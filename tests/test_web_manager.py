@@ -633,6 +633,43 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('if(S.profile!==profile)return;r=await api("/api/scans/"+a.scan_id)', scan)
         self.assertIn('if(S.profile===profile)toast(e.message,"error")', scan)
 
+    def test_broadcast_view_identifies_primary_profile_and_pending_recipient_mismatch(self):
+        with tempfile.TemporaryDirectory() as td:
+            runtime = TelegramManagerRuntime(base_dir=td)
+            cfg = {"account_label": "Main", "owner_id": 12345, "broadcast_allowlist": [11, 22]}
+            class FakeBroadcaster:
+                running = False
+                progress = (0, 0)
+                state = {
+                    "active": True, "end": 9999999999, "next": 0, "interval": 60,
+                    "wave": 1, "run_ok": 67, "run_fail": 0, "life_ok": 67,
+                    "life_fail": 0, "life_waves": 0, "last_error": "",
+                    "pending_wave": {"chat_ids": [11, 22, 33, 44], "completed_ids": [11, 33]},
+                    "history": [],
+                }
+                def short(self):
+                    return "выключена"
+            runtime.configs["default"] = cfg
+            view = runtime._broadcast_view("default", FakeBroadcaster())
+            self.assertTrue(view["is_primary"])
+            self.assertEqual(view["account_label"], "Main")
+            self.assertEqual(view["pending_total"], 4)
+            self.assertEqual(view["pending_completed"], 2)
+            self.assertEqual(view["pending_remaining"], 2)
+            self.assertEqual(view["pending_not_selected"], 2)
+            self.assertEqual(view["pending_completed_not_selected"], 1)
+            self.assertEqual(view["pending_remaining_not_selected"], 1)
+
+    def test_broadcast_ui_explains_primary_account_and_pending_queue_mismatch(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        load = html[html.index("async function loadBroadcast()"):html.index('$("loadPosts").onclick=')]
+        self.assertIn('d.is_primary?"Основной аккаунт"', load)
+        self.assertIn("d.pending_not_selected", load)
+        self.assertIn("d.pending_remaining_not_selected", load)
+        self.assertIn("Продолжение заблокировано, потому что список получателей изменился", load)
+
     def test_broadcast_start_returns_conflict_if_campaign_is_already_running(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
