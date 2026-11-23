@@ -219,3 +219,58 @@ def test_new_account_profile_refuses_to_reuse_an_orphan_session_directory(tmp_pa
         else:
             raise AssertionError("Orphan session directory must not be reused by a new account")
     assert (orphan / "circles.session").read_bytes() == b"do-not-reuse"
+
+
+def test_additional_account_creation_requires_configured_primary_api_credentials(tmp_path):
+    from unittest.mock import patch
+    import combined_multi_account as core
+
+    default_config = tmp_path / "config.json"
+    default_config.write_text('{"api_id": 0, "api_hash": "", "data_dir": "data"}', encoding="utf-8")
+    accounts_dir = tmp_path / "accounts"
+    with (
+        patch.object(core, "BASE", tmp_path),
+        patch.object(core, "DEFAULT_CONFIG_PATH", default_config),
+        patch.object(core, "ACCOUNTS_DIR", accounts_dir),
+        patch.object(core, "CONFIG_PATH", default_config),
+    ):
+        try:
+            core.add_account_profile("work", "Рабочий аккаунт")
+        except ValueError as exc:
+            assert "API ID" in str(exc) or "API HASH" in str(exc)
+        else:
+            raise AssertionError("An account without shared Telegram API credentials must not be created")
+    assert not (accounts_dir / "work" / "config.json").exists()
+
+
+def test_profile_login_disconnects_client_when_profile_config_cannot_be_saved():
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import combined_multi_account as core
+
+    class FakeClient:
+        connected = True
+        disconnected = False
+        async def get_me(self):
+            return SimpleNamespace(id=321, first_name="New", last_name="Account",
+                                   username="new_account", deleted=False)
+        async def disconnect(self):
+            self.connected = False
+            self.disconnected = True
+
+    async def run():
+        manager = core.AccountManager(owner_id=111)
+        fake = FakeClient()
+        manager.auth_flows["work"] = {"client": fake}
+        with (
+            patch.object(core, "read_profile_config", return_value={"_config_path": "/tmp/work/config.json"}),
+            patch.object(core, "save_cfg", side_effect=OSError("disk full")),
+        ):
+            stage, message = await manager._finish_login("work")
+        assert stage == "error"
+        assert "не удалось сохранить профиль" in message
+        assert fake.disconnected
+        assert "work" not in manager.auth_flows
+
+    asyncio.run(run())
