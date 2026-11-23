@@ -732,7 +732,11 @@ class WebManagerTests(unittest.TestCase):
                         "/api/profiles/alpha/broadcast/recipients", headers=headers,
                         json={"chat_ids": [202]},
                     )
-                    self.assertEqual(wrong_account.status, 400)
+                    self.assertEqual(wrong_account.status, 200)
+                    wrong_data = await wrong_account.json()
+                    self.assertEqual(wrong_data["selected_ids"], [])
+                    self.assertEqual(wrong_data["selected_count"], 0)
+                    self.assertEqual(wrong_data["removed_stale_count"], 1)
                     self.assertEqual(alpha_cfg["broadcast_allowlist"], [])
 
                     saved = await client.post(
@@ -749,6 +753,141 @@ class WebManagerTests(unittest.TestCase):
                     await client.close()
                     await runtime.stop()
         asyncio.run(run())
+
+    def test_recipient_get_prunes_stale_saved_ids_before_returning_selection(self):
+        async def run():
+            import json
+            with tempfile.TemporaryDirectory() as td:
+                config_path = Path(td) / "config.json"
+                cfg = {"_config_path": str(config_path), "account_label": "Main",
+                       "broadcast_allowlist_only": True, "broadcast_allowlist": [101, 202, 303, 101]}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    async def chat_list(self, refresh=False):
+                        return [(101, "Current group"), (404, "Another current group")]
+                    def chat_status(self, chat_id):
+                        return "ok"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/broadcast/recipients", runtime.recipients)
+                client = TestClient(TestServer(app)); await client.start_server()
+                try:
+                    response = await client.get(
+                        "/api/profiles/default/broadcast/recipients",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["selected_ids"], [101])
+                    self.assertEqual(data["selected_count"], 1)
+                    self.assertEqual(data["removed_stale_count"], 1)
+                    self.assertEqual(cfg["broadcast_allowlist"], [101])
+                    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertEqual(persisted["broadcast_allowlist"], [101])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_recipient_save_keeps_valid_ids_and_drops_stale_ids(self):
+        async def run():
+            import json
+            with tempfile.TemporaryDirectory() as td:
+                config_path = Path(td) / "config.json"
+                cfg = {"_config_path": str(config_path), "broadcast_allowlist_only": False,
+                       "broadcast_allowlist": []}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    async def chat_list(self, refresh=False):
+                        return [(101, "Current group"), (202, "Another current group")]
+                    def chat_status(self, chat_id):
+                        return "ok"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/recipients", runtime.set_recipients)
+                client = TestClient(TestServer(app)); await client.start_server()
+                try:
+                    response = await client.post(
+                        "/api/profiles/default/broadcast/recipients",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                        json={"chat_ids": [101, 202, 999, 998, 997, 996, 101]},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["requested_count"], 6)
+                    self.assertEqual(data["selected_count"], 2)
+                    self.assertEqual(data["selected_ids"], [101, 202])
+                    self.assertEqual(data["removed_stale_count"], 4)
+                    self.assertEqual(cfg["broadcast_allowlist"], [101, 202])
+                    persisted = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertEqual(persisted["broadcast_allowlist"], [101, 202])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_recipient_save_with_only_stale_ids_clears_selection_without_error(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                cfg = {"_config_path": str(Path(td) / "config.json"),
+                       "broadcast_allowlist_only": True, "broadcast_allowlist": [901]}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    async def chat_list(self, refresh=False):
+                        return [(101, "Current group")]
+                    def chat_status(self, chat_id):
+                        return "ok"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/recipients", runtime.set_recipients)
+                client = TestClient(TestServer(app)); await client.start_server()
+                try:
+                    response = await client.post(
+                        "/api/profiles/default/broadcast/recipients",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                        json={"chat_ids": [901]},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["selected_count"], 0)
+                    self.assertEqual(data["removed_stale_count"], 1)
+                    self.assertEqual(cfg["broadcast_allowlist"], [])
+                    self.assertTrue(cfg["broadcast_allowlist_only"])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_recipient_panel_reconciles_server_filtered_ids_after_save(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        save = html[html.index('$("saveRecipients").onclick=async()=>{'):html.index('$("saveBcSettings").onclick')]
+        self.assertIn("S.recipientSelected=new Set((Array.isArray(r.selected_ids)?r.selected_ids:submittedIds).map(Number))", save)
+        self.assertIn("const removed=Number(r.removed_stale_count)||0", save)
+        self.assertIn("Удалено "+fmt(removed)+" устаревших или чужих ID", save)
+        self.assertIn("S.recipientDirty=false;S.recipientInitialized=true", save)
 
     def test_broadcast_start_uses_current_allowlist_after_dialog_refresh(self):
         async def run():
