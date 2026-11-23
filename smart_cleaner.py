@@ -378,8 +378,7 @@ class SmartCleaner:
         # The panel only needs display and protection fields. Keep the complete
         # legacy row available to API clients unless compact=1 is requested.
         columns = (
-            "chat_id,peer_type,title,username,category,confidence,is_creator,is_admin,is_scam,"
-            "unread_count,is_muted,is_archived,last_message_at,protected_reason,scanned_at,updated_at"
+            "chat_id,title,username,category,is_scam,protected_reason"
             if compact else "*"
         )
         conn = self._read_connection()
