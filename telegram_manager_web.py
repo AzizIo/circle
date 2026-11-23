@@ -487,7 +487,11 @@ class TelegramManagerRuntime:
         total = len(pending.get("chat_ids", []))
         completed = len(pending.get("completed_ids", []))
         progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
+        profile_cfg = self.configs[name]
         return {
+            "profile": name,
+            "account_label": str(profile_cfg.get("account_label") or name),
+            "account_id": int(profile_cfg.get("owner_id") or 0),
             "running": bool(bc.running), "status": bc.short(),
             "active": bool(state.get("active")), "end": state.get("end", 0),
             "next": state.get("next", 0), "interval": state.get("interval", 0),
@@ -1041,9 +1045,14 @@ class TelegramManagerRuntime:
             cid = int(cid)
             items.append({"id": cid, "title": title, "status": bc.chat_status(cid),
                           "selected": cid in allowlist})
-        return web.json_response({"total": len(chats), "items": items, "offset": offset, "limit": limit,
-                                  "allowlist_only": bool(cfg.get("broadcast_allowlist_only")),
-                                  "selected_count": len(allowlist), "selected_ids": sorted(allowlist)})
+        return web.json_response({
+            "profile": name,
+            "account_label": str(cfg.get("account_label") or name),
+            "account_id": int(cfg.get("owner_id") or 0),
+            "total": len(chats), "items": items, "offset": offset, "limit": limit,
+            "allowlist_only": bool(cfg.get("broadcast_allowlist_only")),
+            "selected_count": len(allowlist), "selected_ids": sorted(allowlist),
+        })
 
     async def set_recipients(self, request):
         name = request.match_info["name"]
@@ -1069,7 +1078,7 @@ class TelegramManagerRuntime:
                         raise ValueError("Некорректный ID чата")
                     ids.append(cid)
                 ids = list(dict.fromkeys(ids))
-                live = {int(cid) for cid, _ in await bc.chat_list(refresh=True)}
+                live = {int(cid) for cid, _ in await self._validated_broadcast_chats(bc)}
             unknown = [cid for cid in ids if cid not in live]
             if unknown:
                 raise ValueError(f"Среди выбранных есть чаты, которых нет в текущем аккаунте: {len(unknown)}")
@@ -1107,6 +1116,15 @@ class TelegramManagerRuntime:
         bc = self.broadcasters.get(name)
         if bc is not None and hasattr(bc, "chat_cache"):
             bc.chat_cache = [(int(cid), title) for cid, title in bc.chat_cache if int(cid) not in ids]
+
+    async def _validated_broadcast_chats(self, bc, *, max_age_seconds: float = 45.0):
+        """Reuse a just-refreshed profile-local dialog snapshot for launch validation."""
+        scanned_at = getattr(bc, "_dialogs_scanned_at", 0.0)
+        try:
+            fresh = scanned_at and 0 <= time.time() - float(scanned_at) <= max_age_seconds
+        except (TypeError, ValueError, OverflowError):
+            fresh = False
+        return await bc.chat_list(refresh=not bool(fresh))
 
     async def start_broadcast(self, request):
         name = request.match_info["name"]
