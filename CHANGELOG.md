@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.17 — Preserve Multi-Page Recipient Selection
+
+- Allow recipient pagination to continue after local checkbox changes; selected IDs remain in the profile-local set while pages change.
+- Refreshing the Telegram dialog list no longer clears the user's unsaved selection; the interface explains that the local choice still needs saving.
+- Refined stale-ID regression coverage and reuse of the selected-ID lookup set during recipient page rendering.
+
+
 ## 3.9.16 — Recipient List Integrity
 
 - Validate saved recipient IDs against the selected profile's current dialog snapshot when loading the list, and prune stale IDs from the profile config.
