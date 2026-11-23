@@ -3458,6 +3458,11 @@ class Broadcaster:
             await self.save_subs(force=True)
             self.running = False
             if not self.suspending:
+                terminal_detail = self.terminal_reason_message(reason)
+                if terminal_detail:
+                    st["last_error"] = terminal_detail[:240]
+                elif reason in {"done", "stopped"}:
+                    st["last_error"] = ""
                 recoverable_error = reason == "error" and st.get("active") is True and float(st.get("end") or 0) > time.time()
                 recoverable_account_pause = (reason in {"account_restricted", "spam"}
                                              and isinstance(st.get("pending_wave"), dict)
@@ -3550,6 +3555,18 @@ class Broadcaster:
         if not self.running:
             return "⏹ выключена"
         return "💤 пауза между волнами" if self.state["next"] else "📤 идёт"
+
+    @staticmethod
+    def terminal_reason_message(reason: str) -> str:
+        """Explain why a campaign task stopped before/while starting; diagnostics only."""
+        return {
+            "nopost": "Не найден доступный пост в «Избранном» этого Telegram-аккаунта. Выбери существующее сообщение.",
+            "nochats": "После проверки в выбранном аккаунте не осталось доступных групп. Обнови и сохрани список получателей.",
+            "spam": "Telegram сообщил об ограничении аккаунта. Проверь уведомления Telegram и статус аккаунта; автоматический обход ограничения не выполняется.",
+            "account_restricted": "Telegram ограничил действия этого аккаунта. Проверь уведомления Telegram и дождись снятия ограничения.",
+            "source_restricted": "Telegram запретил использовать выбранное исходное сообщение. Выбери другое сообщение из «Избранного».",
+            "flood_expired": "Ограничение Telegram действует дольше оставшегося времени кампании. Проверь статус аккаунта перед новым запуском.",
+        }.get(str(reason or ""), "")
 
     def summary(self) -> str:
         st = self.state
