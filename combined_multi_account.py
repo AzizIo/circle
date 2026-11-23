@@ -204,7 +204,7 @@ DEFAULTS = {
     "broadcast_auto_subscribe_batch_size": 5,  # успешных действий до плановой паузы
     "broadcast_auto_subscribe_batch_pause_minutes": 30,  # плановый отдых между пакетами
     "broadcast_spambot": False,     # писать @SpamBot при спам-блоке
-    "broadcast_exclude": [],        # id групп, куда рассылка НЕ идёт (переключается в боте)
+    "broadcast_exclude": [],        # id групп, куда рассылка НЕ идёт (переключается в веб-панели)
     "broadcast_allowlist_only": False,
     "broadcast_allowlist": [],      # legacy compatibility; not used in all-groups mode
     "broadcast_notify_waves": True, # присылать отчёт после каждой волны
@@ -1507,7 +1507,7 @@ class Broadcaster:
         self._autosub_message_edited_event = events.MessageEdited(incoming=True)
 
     def _apply_delays(self):
-        """Паузы берём из config.json (меняются в боте, действуют со следующей волны)."""
+        """Паузы берём из config.json (меняются в веб-панели, действуют со следующей волны)."""
         try:
             lo = max(0.0, float(self.cfg.get("broadcast_delay_min", 0.6)))
             hi = max(lo, float(self.cfg.get("broadcast_delay_max", 1.2)))
@@ -1760,7 +1760,7 @@ class Broadcaster:
 
     # ----- диалоги и чаты -----
     async def _scan_dialogs(self):
-        """Один проход по диалогам. Параллельные вызовы (волна + кнопка в боте) делят один проход."""
+        """Один проход по диалогам. Параллельные вызовы (волна + кнопка в веб-панели) делят один проход."""
         if self._scan_task is None or self._scan_task.done():
             self._scan_task = asyncio.ensure_future(self._scan_dialogs_impl())
         return await asyncio.shield(self._scan_task)
@@ -3694,7 +3694,7 @@ async def check_health(client, ddir, cfg, notifier) -> list[str]:
             await notifier.alert("disconnected", "⚠️ Нет соединения с Telegram, пробую переподключиться.", 3600)
         elif not await client.is_user_authorized():
             problems.append("auth")
-            await notifier.alert("auth", "❌ Сессия аккаунта слетела. Открой в боте раздел «Аккаунты» и пройди авторизацию заново.", 21600)
+            await notifier.alert("auth", "❌ Сессия аккаунта слетела. Открой в веб-панели раздел «Аккаунты» и пройди авторизацию заново.", 21600)
         du = shutil.disk_usage(ddir)
         pct = du.free / du.total * 100
         if pct < cfg.get("low_disk_percent", 10):
@@ -6428,7 +6428,7 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
     client = make_client(cfg, ddir)
     await client.connect()
     if not await client.is_user_authorized():
-        log.error("Сессия не авторизована. Пройди авторизацию через Telegram-панель → Аккаунты.")
+        log.error("Сессия не авторизована. Пройди авторизацию через веб-панель → Аккаунты.")
         await client.disconnect()
         db.close()
         await _dead_session_notice(cfg, ddir, "Сессия не авторизована. Открой раздел «Аккаунты» в веб-панели и пройди авторизацию.")
@@ -6493,7 +6493,7 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             web_manager_started = True
             log.info("Smart Cleaner доступен локально: http://127.0.0.1:%s/", WEB_MANAGER_RUNTIME.port)
         except Exception:  # noqa: BLE001
-            log.exception("Web Manager не запущен; Telegram-панель продолжит работу")
+            log.exception("Web Manager не запущен; веб-панель продолжит работу")
 
     if allow_broadcast:
         # A persisted active campaign is a recoverable checkpoint, not permission
@@ -6738,10 +6738,10 @@ def service_state() -> str:
 
 
 def unit_text(all_accounts: bool = False) -> str:
-    # A single supervisor process owns the bot panel and starts additional profiles.
-    # Keeping this command as `run` makes account management available in Telegram.
-    run_args = "run"
-    description = "Telegram circles manager (multi-account bot control)" if all_accounts else "Telegram circles archiver + broadcast + account manager"
+    # A single web host owns the control plane; every Telegram profile is started
+    # and stopped explicitly from the authenticated web panel.
+    run_args = "web"
+    description = "CIRCLES CONTROL Web Manager"
     return f"""[Unit]
 Description={description}
 After=network-online.target
@@ -6756,7 +6756,7 @@ Environment=PYTHONIOENCODING=utf-8
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
 ExecStart={sys.executable} {Path(__file__).resolve()} {run_args}
-Restart=always
+Restart=on-failure
 RestartSec=10
 RestartPreventExitStatus=2 3 4
 TimeoutStopSec=30
@@ -6777,8 +6777,7 @@ def install_service(all_accounts: bool = False) -> str:
     action = "restart" if service_state() == "active" else "start"
     rc, out = sc(action, SERVICE)
     if rc == 0:
-        mode = "с управлением аккаунтами из Telegram-бота" if all_accounts else "для основного аккаунта и дополнительных профилей из Telegram-бота"
-        return f"Сервис {mode} установлен, включён в автозапуск и запущен."
+        return "Веб-панель установлена как systemd-служба и запущена. Telegram-аккаунты запускаются только из веб-панели."
     return f"Ошибка: {out}"
 
 
@@ -7110,19 +7109,13 @@ def people_menu(cfg):
 def service_menu(cfg):
     while True:
         print(f"\n--- Сервис (состояние: {service_state()}) ---")
-        print(" 1. Установить сервис с управлением через Telegram\n 2. Запустить\n 3. Остановить\n"
-              " 4. Перезапустить\n 5. Удалить из автозапуска\n"
-              " 6. Установить сервис для всех аккаунтов с единой бот-панелью\n 0. Назад")
+        print(" 1. Установить службу веб-панели\n 2. Запустить\n 3. Остановить\n"
+              " 4. Перезапустить\n 5. Удалить из автозапуска\n 0. Назад")
         c = ask("Выбор")
         if c in (None, "0"):
             break
         if c == "1":
             print(install_service())
-        elif c == "6":
-            if len(account_profiles()) < 2:
-                print("Дополнительные аккаунты добавляются из Telegram: открой бота → 👤 Аккаунты → ➕ Добавить аккаунт.")
-            else:
-                print(install_service(all_accounts=True))
         elif c in ("2", "3", "4", "5"):
             if not has_systemd():
                 print("Нет systemd.")
