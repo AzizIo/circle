@@ -11,4 +11,4 @@ if [[ ! -f "$ROOT/config.json" ]]; then
   exit 2
 fi
 cd "$ROOT"
-exec "$PYTHON" "$ROOT/combined_multi_account.py" run "$@"
+exec "$PYTHON" "$ROOT/combined_multi_account.py" web "$@"
