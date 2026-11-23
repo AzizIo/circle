@@ -454,3 +454,107 @@ def test_broadcaster_core_blocks_restart_until_previous_task_is_done():
     assert bc.resume() is False
     assert bc.start(60, 12) is False
     assert launched == []
+
+
+def test_forward_counts_only_telegram_message_id_as_confirmed_delivery():
+    import asyncio
+    from types import SimpleNamespace
+    import combined_multi_account as core
+
+    class FakeClient:
+        def __init__(self, result):
+            self.result = result
+        async def forward_messages(self, *args, **kwargs):
+            if isinstance(self.result, Exception):
+                raise self.result
+            return self.result
+
+    chat = SimpleNamespace(id=123, title="Test group")
+    source = SimpleNamespace(id=456)
+    bc = object.__new__(core.Broadcaster)
+    bc._consec_spam = 0
+    bc.client = FakeClient(SimpleNamespace(id=789))
+    assert asyncio.run(bc.forward(source, chat)) == (True, "")
+
+    bc.client = FakeClient(None)
+    assert asyncio.run(bc.forward(source, chat)) == (False, "uncertain")
+
+    bc.client = FakeClient(TimeoutError("acknowledgement lost"))
+    assert asyncio.run(bc.forward(source, chat)) == (False, "uncertain")
+
+
+def test_send_wave_checkpoints_ambiguous_chat_without_marking_it_completed():
+    import asyncio
+    from collections import Counter
+    from types import MethodType, SimpleNamespace
+    import time
+    import combined_multi_account as core
+
+    class FakeSkip:
+        def blocked_until(self, chat_id):
+            return None
+        def report(self):
+            return "no blocked chats"
+
+    class FakeNotifier:
+        def __init__(self):
+            self.alerts = []
+        async def alert(self, *args):
+            self.alerts.append(args)
+
+    bc = object.__new__(core.Broadcaster)
+    pending = {
+        "chat_ids": [123],
+        "completed_ids": [],
+        "ok": 0,
+        "fail": 0,
+        "errors": {},
+        "failed": [],
+        "skipped": 0,
+    }
+    bc.state = {"end": time.time() + 600, "pending_wave": pending}
+    bc.cfg = {}
+    bc.stop_event = asyncio.Event()
+    bc.banned = set()
+    bc.skip = FakeSkip()
+    bc._slow_until = {}
+    bc.progress = (0, 0)
+    bc._abort = False
+    bc._fatal = False
+    bc._fatal_reason = ""
+    bc._flood_wait = 0
+    bc._consec_spam = 0
+    bc.notifier = FakeNotifier()
+    bc._apply_delays = lambda: None
+
+    async def fail_uncertain(_msg, _chat):
+        return False, "uncertain"
+
+    async def no_sleep(_seconds):
+        return False
+
+    def save_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+
+    bc.forward = fail_uncertain
+    bc._sleep = no_sleep
+    bc._save_pending_progress = MethodType(save_progress, bc)
+    result = asyncio.run(bc.send_wave(
+        SimpleNamespace(id=456),
+        [SimpleNamespace(id=123, title="Test group")],
+        pending=pending,
+    ))
+
+    assert result["ok"] == 0
+    assert result["fail"] == 1
+    assert result["errors"] == Counter({"uncertain": 1})
+    assert pending["completed_ids"] == []
+    assert pending["uncertain_deliveries"][0]["chat_id"] == 123
+    assert bc._fatal is True
+    assert bc._fatal_reason == "uncertain_delivery"
+    assert bc.notifier.alerts
