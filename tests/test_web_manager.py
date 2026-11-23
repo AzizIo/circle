@@ -659,16 +659,22 @@ class WebManagerTests(unittest.TestCase):
             self.assertEqual(view["pending_not_selected"], 2)
             self.assertEqual(view["pending_completed_not_selected"], 1)
             self.assertEqual(view["pending_remaining_not_selected"], 1)
+            self.assertTrue(view["has_pending_wave"])
+            self.assertTrue(view["resume_available"])
 
-    def test_broadcast_ui_explains_primary_account_and_pending_queue_mismatch(self):
+    def test_broadcast_ui_explains_frozen_pending_wave_without_blocking_on_allowlist(self):
         import telegram_manager_web as web_module
 
         html = web_module.INDEX_HTML
         load = html[html.index("async function loadBroadcast()"):html.index('$("loadPosts").onclick=')]
         self.assertIn('d.is_primary?"Основной аккаунт"', load)
         self.assertIn("d.pending_not_selected", load)
-        self.assertIn("d.pending_remaining_not_selected", load)
-        self.assertIn("Продолжение заблокировано, потому что список получателей изменился", load)
+        self.assertIn("d.pending_remaining", load)
+        self.assertIn("не меняет эту волну", load)
+        self.assertNotIn("Продолжение заблокировано, потому что список получателей изменился", load)
+        start = html[html.index('$("startBc").onclick=async()=>{'):html.index('$("stopBc").onclick=')]
+        self.assertIn("resume_saved:true", start)
+        self.assertIn("Продолжить сохранённую очередь?", start)
 
     def test_broadcast_start_returns_conflict_if_campaign_is_already_running(self):
         async def run():
@@ -881,13 +887,13 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
-    def test_recipient_get_prunes_stale_saved_ids_before_returning_selection(self):
+    def test_recipient_get_is_read_only_and_never_prunes_saved_ids(self):
         async def run():
-            import json
             with tempfile.TemporaryDirectory() as td:
                 config_path = Path(td) / "config.json"
+                original_allowlist = [101, 202, 303, 101]
                 cfg = {"_config_path": str(config_path), "account_label": "Main",
-                       "broadcast_allowlist_only": True, "broadcast_allowlist": [101, 202, 303, 101]}
+                       "broadcast_allowlist_only": True, "broadcast_allowlist": list(original_allowlist)}
                 class FakeClient:
                     async def iter_dialogs(self):
                         if False:
@@ -915,9 +921,8 @@ class WebManagerTests(unittest.TestCase):
                     self.assertEqual(data["selected_ids"], [101])
                     self.assertEqual(data["selected_count"], 1)
                     self.assertEqual(data["removed_stale_count"], 2)
-                    self.assertEqual(cfg["broadcast_allowlist"], [101])
-                    persisted = json.loads(config_path.read_text(encoding="utf-8"))
-                    self.assertEqual(persisted["broadcast_allowlist"], [101])
+                    self.assertEqual(cfg["broadcast_allowlist"], original_allowlist)
+                    self.assertFalse(config_path.exists(), "GET must not persist a pruned allowlist")
                 finally:
                     await client.close()
                     await runtime.stop()
@@ -1087,6 +1092,76 @@ class WebManagerTests(unittest.TestCase):
                     self.assertEqual(data["selected_ids"], [101])
                     self.assertEqual(cfg["broadcast_allowlist"], [101])
                     self.assertEqual(bc.started, 1)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_saved_broadcast_wave_resumes_from_its_checkpoint_not_current_allowlist(self):
+        async def run():
+            import time
+            with tempfile.TemporaryDirectory() as td:
+                config_path = Path(td) / "config.json"
+                cfg = {"_config_path": str(config_path), "broadcast_allowlist_only": True,
+                       "broadcast_allowlist": [9001, 9002]}
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+                class FakeBroadcaster:
+                    def __init__(self):
+                        self.running = False
+                        self.progress = (0, 0)
+                        self.state = {
+                            "active": True, "end": time.time() + 3600, "next": 0, "interval": 60,
+                            "pending_wave": {"post_id": 77,
+                                             "chat_ids": list(range(1, 310)),
+                                             "completed_ids": list(range(1, 68))},
+                        }
+                        self.resume_calls = 0
+                        self.start_calls = 0
+                    def short(self):
+                        return "выключена"
+                    def resume(self):
+                        self.resume_calls += 1
+                        self.running = True
+                        return True
+                    def start(self, interval, hours):
+                        self.start_calls += 1
+                        raise AssertionError("Pending checkpoint must never be replaced with a new campaign")
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), cfg, Path(td))
+                bc = FakeBroadcaster()
+                runtime.register_broadcaster("default", bc)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/start", runtime.start_broadcast)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    blocked = await client.post(
+                        "/api/profiles/default/broadcast/start", headers=headers,
+                        json={"confirmed": True, "recipient_ids": [9001, 9002]},
+                    )
+                    self.assertEqual(blocked.status, 400)
+                    self.assertEqual(bc.resume_calls, 0)
+                    self.assertEqual(bc.start_calls, 0)
+
+                    resumed = await client.post(
+                        "/api/profiles/default/broadcast/start", headers=headers,
+                        json={"confirmed": True, "resume_saved": True},
+                    )
+                    self.assertEqual(resumed.status, 202)
+                    data = await resumed.json()
+                    self.assertTrue(data["resumed"])
+                    self.assertEqual(data["selected_count"], 309)
+                    self.assertEqual(data["already_completed"], 67)
+                    self.assertEqual(data["remaining_count"], 242)
+                    self.assertEqual(bc.resume_calls, 1)
+                    self.assertEqual(bc.start_calls, 0)
+                    self.assertEqual(cfg["broadcast_allowlist"], [9001, 9002])
                 finally:
                     await client.close()
                     await runtime.stop()
