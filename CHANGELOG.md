@@ -1,3 +1,12 @@
+## 3.9.22 — Independent Web Control Plane
+
+- Added a standalone `web` host that runs the authenticated local web panel without opening a Telegram session or starting an account worker.
+- Moved the primary `default` profile into the same managed start/stop lifecycle as secondary accounts; the panel stays online when every profile is stopped.
+- Made profile startup from the web panel manual-only: saved campaigns do not auto-resume when a managed profile starts.
+- Kept link capture and durable SQLite queueing available to connected profiles, while executing queued auto-subscribe actions only during an active broadcast campaign.
+- Removed the legacy Telegram bot control runtime and bot-based dead-session notification.
+- Updated `start.sh` and the systemd installer to start the web host; added lifecycle regression tests.
+
 # CIRCLES CONTROL — Changelog
 
 ## 3.9.21 — Primary Account & Pending Queue Diagnostics
