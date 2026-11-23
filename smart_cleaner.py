@@ -216,6 +216,7 @@ class SmartCleaner:
         cache_hits = 0
         now = time.time()
         partial_reason = ""
+        total_estimate = None
         cache_ttl = 7 * 24 * 60 * 60
         cache = await asyncio.to_thread(self._scan_cache_sync)
         async with self._lock:
@@ -252,22 +253,23 @@ class SmartCleaner:
                         and now - float(cached.get("scanned_at") or 0) <= cache_ttl
                     )
                     about = _clean(getattr(entity, "about", "") or "", 2000)
-                    if not about and cache_valid:
+                    cached_about_used = bool(cache_valid and not about)
+                    if cached_about_used:
                         about = _clean(cached.get("about", ""), 2000)
-                        if about:
-                            cache_hits += 1
+                        cache_hits += 1
                     samples: list[str] = []
                     category, confidence, scores = classify_combined(title, username, about, ())
                     # Ask Telegram only when title/available metadata is ambiguous.
                     if category == "uncertain" or confidence < 0.76:
-                        if not about:
+                        if not about and not cached_about_used:
                             about = await self._fetch_about(client, entity, kind)
                         category, confidence, scores = classify_combined(title, username, about, ())
                     if category == "uncertain" and sample_messages > 0:
-                        cached_sample = _clean(cached.get("sample_text", ""), 6000) if cache_valid else ""
-                        if cached_sample:
-                            samples = [part.strip() for part in cached_sample.split(" | ") if part.strip()]
-                            samples = samples[:max(0, min(int(sample_messages), 10))]
+                        if cache_valid:
+                            cached_sample = _clean(cached.get("sample_text", ""), 6000)
+                            if cached_sample:
+                                samples = [part.strip() for part in cached_sample.split(" | ") if part.strip()]
+                                samples = samples[:max(0, min(int(sample_messages), 10))]
                             cache_hits += 1
                         else:
                             try:
