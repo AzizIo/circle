@@ -313,9 +313,14 @@ except ImportError as _web_import_error:
 def add_account_profile(name: str) -> Path:
     """Clone safe defaults into an isolated account profile; never clone auth/session data."""
     target = profile_config_path(name)
-    if target.exists():
-        raise FileExistsError(f"Профиль '{name}' уже существует")
+    if target.exists() or (target.parent.exists() and any(target.parent.iterdir())):
+        raise FileExistsError(f"Профиль '{name}' уже существует или его папка содержит данные")
+    if not DEFAULT_CONFIG_PATH.is_file():
+        raise ValueError("Не найден config.json основного аккаунта. Сначала настрой основной аккаунт.")
     base_cfg = read_profile_config(DEFAULT_CONFIG_PATH)
+    source_problems = account_cfg_problems(base_cfg)
+    if source_problems:
+        raise ValueError("Сначала настрой основной аккаунт: " + "; ".join(source_problems))
     cfg = dict(base_cfg)
     cfg.update({
         "owner_id": 0,
@@ -3948,33 +3953,59 @@ class AccountManager:
             if current is asyncio.current_task():
                 self.auth_timeout_tasks.pop(name, None)
 
+    @staticmethod
+    def _auth_error_message(exc: Exception) -> str:
+        """Translate common Telegram login failures without exposing credentials or RPC payloads."""
+        kind = type(exc).__name__
+        if kind in {"PhoneNumberInvalidError", "PhoneNumberInvalid"}:
+            return "Telegram не принимает этот номер. Проверь код страны и номер телефона."
+        if kind in {"PhoneNumberBannedError", "PhoneNumberBanned"}:
+            return "Telegram сообщил, что этот номер заблокирован."
+        if kind in {"ApiIdInvalidError", "ApiIdInvalid"}:
+            return "Telegram отклонил API ID / API Hash. Проверь настройки основного аккаунта."
+        if kind in {"PhoneNumberFloodError", "PhoneNumberFlood"}:
+            return "Telegram временно ограничил запросы кода для этого номера. Попробуй позже."
+        if kind in {"FloodWaitError", "FloodWait"}:
+            seconds = max(1, int(getattr(exc, "seconds", 0) or 0))
+            return f"Telegram попросил подождать {seconds} секунд перед повторным запросом кода."
+        if kind in {"AuthRestartError", "AuthRestart"}:
+            return "Telegram обновил состояние авторизации. Нажми «Отправить код» ещё раз."
+        return f"Telegram не завершил авторизацию ({kind}). Проверь номер и попробуй снова."
+
     async def begin_login(self, name: str, phone: str) -> tuple[str, str]:
-        phone = phone.strip()
+        phone = str(phone or "").strip()
         if not re.fullmatch(r"\+?[1-9]\d{6,14}", phone):
-            return "error", "Неверный формат номера. Отправь номер с кодом страны, например +79991234567."
+            return "error", "Неверный формат номера. Введи номер с кодом страны, например +79991234567."
         if not phone.startswith("+"):
             phone = "+" + phone
-        if self.is_running(name):
-            return "error", "Сначала останови этот профиль, затем начинай авторизацию."
-        await self._discard_auth(name)
         try:
-            cfg = read_profile_config(self._profile_config_path(name))
+            path = self._profile_config_path(name)
+        except ValueError as exc:
+            return "error", str(exc)
+        if not path.is_file():
+            return "error", "Сначала создай профиль в разделе «Добавить аккаунт»."
+        if self.is_running(name):
+            return "error", "Этот профиль уже работает. Останови его перед повторной авторизацией."
+        await self._discard_auth(name)
+        client = None
+        try:
+            cfg = read_profile_config(path)
             ddir = data_dir(cfg)
             problems = account_cfg_problems(cfg)
             if problems:
-                return "error", "Сначала исправь настройки основного профиля: " + "; ".join(problems)
+                return "error", f"Профиль «{name}» не настроен: " + "; ".join(problems)
             client = make_client(cfg, ddir)
             await client.connect()
             if await client.is_user_authorized():
                 me = await client.get_me()
                 cfg["account_label"] = display_name(me)
-                cfg["owner_id"] = me.id
+                cfg["owner_id"] = int(me.id)
                 save_cfg(cfg)
                 await client.disconnect()
                 ok, message = await self.start_profile(name)
-                tail = "Архиватор запускается." if ok else message
+                tail = "Профиль запускается." if ok else message
                 return "done", f"Этот аккаунт уже авторизован: {display_name(me)}. {tail}"
-            sent = await client.send_code_request(phone.strip())
+            sent = await client.send_code_request(phone)
             expires = time.monotonic() + 600
             self.auth_flows[name] = {
                 "client": client, "phone": phone,
@@ -3983,15 +4014,16 @@ class AccountManager:
             }
             timer = asyncio.create_task(self._expire_auth_flow(name, expires), name=f"auth-timeout:{name}")
             self.auth_timeout_tasks[name] = timer
-            return "code", "Код отправлен в Telegram. Отправь сюда код из Telegram. Он будет удалён из чата после обработки."
-        except Exception as e:  # noqa: BLE001
-            try:
-                if "client" in locals() and client.is_connected():
-                    await client.disconnect()
-            except Exception:
-                pass
-            log.warning("Не удалось отправить код для профиля %s: %s", name, type(e).__name__)
-            return "error", f"Не удалось отправить код ({type(e).__name__}). Проверь номер и попробуй снова позже."
+            return "code", "Код отправлен в Telegram. Введи его ниже; код не сохраняется в конфигурации."
+        except Exception as exc:  # noqa: BLE001
+            if client is not None:
+                try:
+                    if client.is_connected():
+                        await client.disconnect()
+                except Exception:
+                    pass
+            log.warning("Не удалось начать авторизацию профиля %s: %s", name, type(exc).__name__)
+            return "error", self._auth_error_message(exc)
 
     async def submit_code(self, name: str, code: str) -> tuple[str, str]:
         flow = self.auth_flows.get(name)
@@ -4039,6 +4071,12 @@ class AccountManager:
             cfg["account_label"] = display_name(me)
             cfg["owner_id"] = int(me.id)
             save_cfg(cfg)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("Не удалось сохранить данные авторизованного профиля %s", name)
+            return "error", (
+                f"Telegram подтвердил вход, но не удалось сохранить профиль ({type(exc).__name__}). "
+                "Существующие профили и сессии не изменены. Проверь журнал сервера."
+            )
         finally:
             try:
                 await client.disconnect()
@@ -4049,7 +4087,7 @@ class AccountManager:
             if timer and timer is not asyncio.current_task():
                 timer.cancel()
         ok, message = await self.start_profile(name)
-        suffix = " Архиватор запускается." if ok else f" Но запуск не выполнен: {message}"
+        suffix = " Профиль запускается." if ok else f" Авторизация сохранена, но запуск не выполнен: {message}"
         return "done", f"✅ Аккаунт авторизован: {display_name(me)}.{suffix}"
 
     async def _discard_auth(self, name: str) -> None:
