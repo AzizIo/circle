@@ -127,9 +127,13 @@ def test_autosub_listener_attaches_only_for_active_campaign():
     assert "self.client.remove_event_handler" in detach
     ensure = _block(SOURCE, "    def _ensure_autosub_worker(", "    async def _autosub_worker_loop")
     assert "not self.running or not self.state.get(\"active\")" in ensure
+    assert "self.stop_event.is_set()" in ensure
     assert "self._attach_autosub_listener()" in ensure
+    worker = _block(SOURCE, "    async def _autosub_worker_loop(self):", "    async def _on_mention(self, event):")
+    assert "self.stop_event.is_set()" in worker
     mention = _block(SOURCE, "    async def _on_mention(self, event):", "    async def close(self):")
     assert "not self.running or not self.state.get(\"active\")" in mention
+    assert "self.stop_event.is_set()" in mention
     web_source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
     settings = _block(web_source, "    async def settings(self, request):", "    def _archive_connection")
     assert "bc._stop_autosub_worker()" in settings
