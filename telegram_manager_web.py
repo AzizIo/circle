@@ -1335,7 +1335,7 @@ class TelegramManagerRuntime:
         cfg = self.configs[name]
         task = getattr(bc, "task", None)
         if bc.running or (task is not None and not task.done()):
-            raise web.HTTPConflict(text="Кампания ещё выполняется или сохраняет результат. Повтори после завершения операции.")
+            raise web.HTTPConflict(text="Кампания уже выполняется или сохраняет результат. Повтори после завершения операции.")
         try:
             payload = await request.json()
             if not isinstance(payload, dict) or payload.get("confirmed") is not True:
