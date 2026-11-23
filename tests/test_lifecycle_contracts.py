@@ -274,3 +274,34 @@ def test_profile_login_disconnects_client_when_profile_config_cannot_be_saved():
         assert "work" not in manager.auth_flows
 
     asyncio.run(run())
+
+
+
+def test_broadcast_uncertain_delivery_is_not_completed_or_retried_blindly():
+    body = _block(
+        SOURCE,
+        "    async def send_wave(self, msg, chats, pending: dict | None = None) -> dict:",
+        "    def _record_wave(self, r, seconds, partial=False, partial_reason=\"\"):",
+    )
+    uncertain = body.index('if reason == "uncertain":')
+    save = body.index("self._save_pending_progress(pending, r, completed)", uncertain)
+    abort = body.index('self._fatal_reason = "uncertain_delivery"', uncertain)
+    assert uncertain < save < abort
+    assert "completed.add(chat_id)" not in body[uncertain:]
+
+
+def test_broadcast_only_counts_confirmed_telegram_message_ids_as_success():
+    forward = _block(
+        SOURCE,
+        "    async def forward(self, msg, chat):",
+        "    @staticmethod\n    def _pending_result",
+    )
+    assert 'getattr(item, "id", None)' in forward
+    assert 'return False, "uncertain"' in forward
+    wave = _block(
+        SOURCE,
+        "    async def send_wave(self, msg, chats, pending: dict | None = None) -> dict:",
+        "    def _record_wave(self, r, seconds, partial=False, partial_reason=\"\"):",
+    )
+    assert 'r["ok"] += 1' in wave
+    assert 'r["errors"][reason] += 1' in wave
