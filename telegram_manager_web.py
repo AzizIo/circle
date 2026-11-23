@@ -22,6 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
+APP_VERSION = "3.9.4"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -276,13 +277,13 @@ class TelegramManagerRuntime:
                                      "Pragma": "no-cache", "Expires": "0"})
 
     async def health(self, request):
-        return web.json_response({"ok": True, "version": "3.9.0"})
+        return web.json_response({"ok": True, "version": APP_VERSION})
 
     async def system(self, request):
         disk_path = self.base_dir
         usage = shutil.disk_usage(disk_path)
         return web.json_response({
-            "ok": True, "version": "3.9.0", "uptime_seconds": int(time.time() - self.started_at),
+            "ok": True, "version": APP_VERSION, "uptime_seconds": int(time.time() - self.started_at),
             "disk_total": usage.total, "disk_free": usage.free,
             "profiles_online": len(self.clients),
         })
@@ -665,9 +666,17 @@ class TelegramManagerRuntime:
         entries = [entry for entry in all_entries
                    if (level == "ALL" or entry["level"] == level)
                    and (not query or query in entry["raw"].casefold())]
-        return web.json_response({"kind": kind, "path": filename, "lines": [x["raw"] for x in entries],
-                                  "entries": entries, "count": len(entries),
-                                  "total_count": len(all_entries), "counts": counts})
+        # The panel uses timestamp/level/message only. Keep the legacy response
+        # shape for other clients, while avoiding duplicate raw text in compact mode.
+        compact = request.query.get("compact") == "1"
+        if compact:
+            entries = [{key: entry[key] for key in ("timestamp", "level", "message")}
+                       for entry in entries]
+        payload = {"kind": kind, "path": filename, "entries": entries, "count": len(entries),
+                   "total_count": len(all_entries), "counts": counts}
+        if not compact:
+            payload["lines"] = [x["raw"] for x in entries]
+        return web.json_response(payload)
 
     def _media_inventory_sync(self, name: str) -> dict:
         """Inventory only files under videos/; keep every path referenced by circles.db."""
