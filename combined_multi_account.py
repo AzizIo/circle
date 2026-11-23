@@ -95,7 +95,7 @@ CONFIG_PATH = Path(os.getenv("CIRCLES_CONFIG", str(BASE / "config.json")))
 DEFAULT_CONFIG_PATH = CONFIG_PATH
 ACCOUNTS_DIR = BASE / "accounts"
 SERVICE = "circles-archiver"
-APP_VERSION = "3.9.3"
+APP_VERSION = "3.9.4"
 AUTOSUB_OWNER_PAUSE_REASON = "приостановлена владельцем"
 
 
@@ -628,6 +628,9 @@ class DB:
             self.conn.execute("DELETE FROM backfill_state WHERE media_type='video'")
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_circles_topic_date ON circles(topic_id, date_utc)")
+            self.conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_circles_user_date_msg "
+                "ON circles(user_id, date_utc DESC, msg_id DESC)")
             self.conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_circles_media_type ON circles(media_type, sent, date_utc)")
             self.conn.commit()
