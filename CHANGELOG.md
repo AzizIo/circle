@@ -1,3 +1,11 @@
+## 3.9.24 — Reliable Web Account Onboarding
+
+- Validate the source account's Telegram API credentials before creating an additional profile, and reject profile folders that already contain data instead of attaching to a stale session.
+- Improve account creation and authorization API validation, return conflict status for duplicate profile names, and surface profile-list read failures instead of presenting an empty list.
+- Keep Telegram login requests alive for up to two minutes in the browser so slow code/2FA exchanges do not appear to fail at the 30-second UI timeout.
+- Preserve the selected authorization profile across account-list refreshes, direct the user to the next login step, and refresh profile status when an existing session is detected.
+- Add regression coverage for create-account, login-code, 2FA, malformed payloads, slow Telegram requests and selected-profile continuity.
+
 ## 3.9.23 — Safe Broadcast Checkpoint Recovery
 
 - Made recipient-list reads side-effect free: periodic UI polling no longer rewrites or prunes the saved allowlist when Telegram returns an incomplete dialog snapshot.
