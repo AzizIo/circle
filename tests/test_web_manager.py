@@ -5,6 +5,7 @@ import unittest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from telegram_manager_web import TelegramManagerRuntime
+from combined_multi_account import Broadcaster
 
 
 class WebManagerTests(unittest.TestCase):
@@ -611,6 +612,30 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn("let savedOnServer=false", html)
         self.assertIn("Список сохранён на сервере, но интерфейс не обновился:", html)
         self.assertIn('S.recipientAccountLabel=r.account_label||profile', html)
+
+    def test_broadcaster_exposes_clear_terminal_start_reasons(self):
+        expected = {
+            "nopost": "Избранном",
+            "nochats": "доступных групп",
+            "spam": "ограничении аккаунта",
+            "account_restricted": "ограничил действия",
+            "source_restricted": "исходное сообщение",
+            "flood_expired": "Ограничение Telegram",
+        }
+        for reason, phrase in expected.items():
+            with self.subTest(reason=reason):
+                self.assertIn(phrase, Broadcaster.terminal_reason_message(reason))
+        self.assertEqual(Broadcaster.terminal_reason_message("done"), "")
+
+    def test_broadcast_ui_displays_engine_failure_and_resume_state(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        load = html[html.index("async function loadBroadcast()"):html.index('$("loadPosts").onclick=')]
+        self.assertIn("d.last_error", load)
+        self.assertIn('Причина остановки/незапуска: ', load)
+        self.assertIn("pendingResume=!!d.active&&!d.running", load)
+        self.assertIn("⚠ ожидает продолжения", load)
 
     def test_panel_hides_saved_access_token_and_explains_timeout_context(self):
         import telegram_manager_web as web_module
