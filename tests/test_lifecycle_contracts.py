@@ -319,7 +319,10 @@ def test_uncertain_delivery_stops_as_a_distinct_recoverable_reason():
     )
     assert 'elif self._fatal_reason == "uncertain_delivery":' in body
     assert 'reason = "uncertain_delivery"' in body
-    assert "PeerFlood" not in body.split('elif self._fatal_reason == "uncertain_delivery":', 1)[1].split("else:", 1)[0]
+    uncertain_branch = body.split('elif self._fatal_reason == "uncertain_delivery":', 1)[1].split("else:", 1)[0]
+    assert 'st["last_error"] = "uncertain_delivery:' in uncertain_branch
+    assert 'await self.alert("account-restricted"' not in uncertain_branch
+    assert 'reason = "account_restricted"' not in uncertain_branch
     assert '"uncertain_delivery"' in _block(
         SOURCE,
         "    def terminal_reason_message(reason: str) -> str:",
@@ -371,6 +374,35 @@ def test_resolve_uncertain_delivery_requires_owner_decision_and_updates_checkpoi
     assert bc.state["last_error"] == ""
     assert bc.state["next"] == 0
     assert saved
+
+    retry_bc = object.__new__(core.Broadcaster)
+    retry_pending = {
+        "chat_ids": [303],
+        "completed_ids": [],
+        "ok": 0,
+        "fail": 1,
+        "errors": {"uncertain": 1},
+        "failed": [("Retry group", "uncertain")],
+        "uncertain_deliveries": [{"chat_id": 303, "title": "Retry group", "detected_at": 1}],
+    }
+    retry_bc.state = {"active": True, "end": 9999999999, "pending_wave": retry_pending,
+                      "last_error": "uncertain_delivery"}
+    def save_retry_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+    retry_bc._save_pending_progress = MethodType(save_retry_progress, retry_bc)
+    retry_result = retry_bc.resolve_uncertain_delivery(303, "retry")
+    assert retry_result["action"] == "retry"
+    assert retry_result["remaining_uncertain"] == 0
+    assert retry_pending["completed_ids"] == []
+    assert retry_pending["ok"] == 0
+    assert retry_pending["fail"] == 0
+    assert retry_pending["errors"] == {}
+    assert retry_bc.state["last_error"] == ""
 
     try:
         bc.resolve_uncertain_delivery(202, "retry")
