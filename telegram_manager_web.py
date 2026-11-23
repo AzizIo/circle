@@ -1157,9 +1157,6 @@ class TelegramManagerRuntime:
     async def select_broadcast_post(self, request):
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
-        task = getattr(bc, "task", None)
-        if bc.running or (task is not None and not task.done()):
-            raise web.HTTPConflict(text="Кампания ещё завершает остановку. Проверка отправки станет доступна через несколько секунд.")
         try:
             payload = await request.json()
             post_id = int(payload.get("post_id", 0))
@@ -1471,6 +1468,9 @@ class TelegramManagerRuntime:
     async def resolve_broadcast_uncertain(self, request):
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
+        task = getattr(bc, "task", None)
+        if bc.running or (task is not None and not task.done()):
+            raise web.HTTPConflict(text="Кампания ещё завершает остановку. Проверка отправки станет доступна через несколько секунд.")
         try:
             payload = await request.json()
             if not isinstance(payload, dict):
