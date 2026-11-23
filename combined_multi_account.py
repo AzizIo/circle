@@ -4054,7 +4054,7 @@ class AccountManager:
     def set_broadcast_number(self, name: str, key: str, value) -> None:
         if key not in {"broadcast_interval_min", "broadcast_hours", "broadcast_delay_min", "broadcast_delay_max"}:
             raise ValueError("Недопустимая настройка рассылки")
-        cfg = self.configs.get(name) or read_profile_config(profile_config_path(name))
+        cfg = self.configs.get(name) or read_profile_config(self._profile_config_path(name))
         if key == "broadcast_delay_min" and float(value) > float(cfg.get("broadcast_delay_max", 1.2)):
             raise ValueError("Минимальная пауза не может быть больше максимальной")
         if key == "broadcast_delay_max" and float(value) < float(cfg.get("broadcast_delay_min", 0.6)):
