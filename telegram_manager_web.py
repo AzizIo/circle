@@ -22,9 +22,30 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.23"
+APP_VERSION = "3.9.24"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
+_CYRILLIC_PROFILE_TRANSLATION = str.maketrans({
+    "а":"a","б":"b","в":"v","г":"g","д":"d","е":"e","ё":"yo","ж":"zh","з":"z",
+    "и":"i","й":"y","к":"k","л":"l","м":"m","н":"n","о":"o","п":"p","р":"r",
+    "с":"s","т":"t","у":"u","ф":"f","х":"kh","ц":"ts","ч":"ch","ш":"sh",
+    "щ":"shch","ъ":"","ы":"y","ь":"","э":"e","ю":"yu","я":"ya",
+    "і":"i","ї":"yi","є":"ye","ґ":"g",
+})
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
+
+
+def normalize_profile_name(raw_name: str) -> tuple[str, str]:
+    """Return a safe ASCII folder name plus a human-readable account label."""
+    label = str(raw_name or "").strip()
+    label = re.sub(r"[\\x00-\\x1f\\x7f\\u200e\\u200f\\u202a-\\u202e]", "", label)[:80].strip()
+    if not label:
+        raise ValueError("Укажи название аккаунта")
+    slug = label.lower().translate(_CYRILLIC_PROFILE_TRANSLATION)
+    slug = re.sub(r"[^a-z0-9._-]+", "-", slug)
+    slug = re.sub(r"-{2,}", "-", slug).strip("._-")[:40].strip("._-")
+    if not PROFILE_RE.fullmatch(slug) or slug == "default":
+        raise ValueError("Не удалось создать техническое имя профиля. Используй буквы, цифры и дефис.")
+    return slug, label
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
 
 # Only non-secret, supported settings are exposed to the browser.
@@ -419,11 +440,21 @@ class TelegramManagerRuntime:
                         running = self.account_manager.is_running(name)
                     except Exception:
                         pass
+                has_session = False
+                auth_stage = None
+                if self.account_manager is not None:
+                    try:
+                        has_session = bool(self.account_manager.has_session(name))
+                        flow = self.account_manager.auth_flows.get(name)
+                        auth_stage = flow.get("stage") if isinstance(flow, dict) else None
+                    except Exception:
+                        log.exception("Не удалось получить состояние авторизации профиля %s", name)
                 items.append({
                     "name": name, "label": cfg.get("account_label") or name,
                     "status": status, "active": connected, "running": running,
-                    "can_start": bool(self.account_manager and not running and not connected
-                                      and self.account_manager.has_session(name)),
+                    "has_session": has_session, "auth_stage": auth_stage,
+                    "can_authorize": bool(self.account_manager and not running and not connected),
+                    "can_start": bool(self.account_manager and not running and not connected and has_session),
                     "can_stop": bool(self.account_manager and running),
                 })
         else:
@@ -437,40 +468,82 @@ class TelegramManagerRuntime:
             raise web.HTTPServiceUnavailable(text="Менеджер аккаунтов недоступен")
         try:
             payload = await request.json()
-            name = str(payload.get("name", "")).strip()
-            if not PROFILE_RE.fullmatch(name) or name == "default":
-                raise ValueError("Имя профиля: 1–40 символов латиницей, цифрами, точкой, _ или -")
-            path = self.account_manager.add_profile(name)
-            return web.json_response({"ok": True, "name": name, "config": path.name}, status=201)
-        except (ValueError, FileExistsError) as exc:
+            if not isinstance(payload, dict):
+                raise ValueError("Ожидалось название нового аккаунта")
+            name, label = normalize_profile_name(payload.get("name", ""))
+            path = self.account_manager.add_profile(name, label)
+            return web.json_response({
+                "ok": True, "name": name, "label": label, "config": path.name,
+                "message": f"Профиль «{label}» создан. Теперь авторизуй Telegram по номеру телефона.",
+            }, status=201)
+        except FileExistsError as exc:
+            raise web.HTTPConflict(text=str(exc))
+        except ValueError as exc:
             raise web.HTTPBadRequest(text=str(exc))
+        except OSError as exc:
+            log.exception("Не удалось создать профиль Telegram")
+            raise web.HTTPInsufficientStorage(text=f"Не удалось сохранить профиль: {type(exc).__name__}")
+
+    @staticmethod
+    async def _json_payload(request, *, expected: str) -> dict:
+        try:
+            payload = await request.json()
+        except (ValueError, json.JSONDecodeError):
+            raise web.HTTPBadRequest(text="Тело запроса должно быть корректным JSON")
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(text="Некорректный формат запроса")
+        value = str(payload.get(expected, "") or "").strip()
+        if not value:
+            raise web.HTTPBadRequest(text={
+                "phone": "Укажи номер телефона с кодом страны",
+                "code": "Введи код из Telegram",
+                "password": "Введи пароль двухэтапной защиты",
+            }.get(expected, "Заполни обязательное поле"))
+        payload[expected] = value
+        return payload
 
     async def login_start(self, request):
         manager = self.account_manager
         if manager is None:
             raise web.HTTPServiceUnavailable(text="Менеджер аккаунтов недоступен")
+        payload = await self._json_payload(request, expected="phone")
+        name = request.match_info["name"]
+        if not PROFILE_RE.fullmatch(name) or name == "default":
+            raise web.HTTPBadRequest(text="Профиль не найден")
         try:
-            payload = await request.json()
-            stage, message = await manager.begin_login(request.match_info["name"], str(payload.get("phone", "")))
+            stage, message = await manager.begin_login(name, payload["phone"])
             return web.json_response({"stage": stage, "message": message}, status=200 if stage in {"code", "done"} else 400)
         except (ValueError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
+        except Exception as exc:
+            log.exception("Сбой начала авторизации профиля %s", name)
+            raise web.HTTPBadGateway(text=f"Telegram не принял запрос авторизации ({type(exc).__name__})")
 
     async def login_code(self, request):
         manager = self.account_manager
         if manager is None:
             raise web.HTTPServiceUnavailable(text="Менеджер аккаунтов недоступен")
-        payload = await request.json()
-        stage, message = await manager.submit_code(request.match_info["name"], str(payload.get("code", "")))
-        return web.json_response({"stage": stage, "message": message}, status=200 if stage in {"done", "password"} else 400)
+        payload = await self._json_payload(request, expected="code")
+        name = request.match_info["name"]
+        try:
+            stage, message = await manager.submit_code(name, payload["code"])
+            return web.json_response({"stage": stage, "message": message}, status=200 if stage in {"done", "password"} else 400)
+        except Exception as exc:
+            log.exception("Сбой подтверждения кода профиля %s", name)
+            raise web.HTTPBadGateway(text=f"Не удалось подтвердить код ({type(exc).__name__})")
 
     async def login_password(self, request):
         manager = self.account_manager
         if manager is None:
             raise web.HTTPServiceUnavailable(text="Менеджер аккаунтов недоступен")
-        payload = await request.json()
-        stage, message = await manager.submit_password(request.match_info["name"], str(payload.get("password", "")))
-        return web.json_response({"stage": stage, "message": message}, status=200 if stage == "done" else 400)
+        payload = await self._json_payload(request, expected="password")
+        name = request.match_info["name"]
+        try:
+            stage, message = await manager.submit_password(name, payload["password"])
+            return web.json_response({"stage": stage, "message": message}, status=200 if stage == "done" else 400)
+        except Exception as exc:
+            log.exception("Сбой подтверждения 2FA профиля %s", name)
+            raise web.HTTPBadGateway(text=f"Не удалось подтвердить пароль 2FA ({type(exc).__name__})")
 
     async def start_profile(self, request):
         name = request.match_info["name"]
