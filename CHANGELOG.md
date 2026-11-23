@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.19 — Async UI Race Protection
+
+- Queue the latest log refresh when filters change during an in-flight request; the final filter selection is loaded automatically instead of being lost.
+- Bind long-running chat-scan progress polling to the account that started the scan so a profile switch cannot display another account's scan state.
+- Added regression tests for both asynchronous UI race conditions.
+
+
 ## 3.9.18 — Broadcast Start Diagnostics
 
 - Persist readable terminal reasons when a campaign task stops before its first wave or exits due to an account, source-post, destination, or Telegram wait condition.
