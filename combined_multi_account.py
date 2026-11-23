@@ -6387,16 +6387,8 @@ AUTH_ERRORS = tuple(getattr(errors, n) for n in (
 
 
 async def _dead_session_notice(cfg, ddir, text):
-    """Сессия мертва, а владельца надо предупредить: пишем через бота (id владельца запомнен с прошлых запусков)."""
-    if not (cfg.get("bot_token") and cfg.get("owner_id")):
-        return
-    try:
-        b = TelegramClient(str(ddir / "control_bot"), int(cfg["api_id"]), cfg["api_hash"])
-        await b.start(bot_token=cfg["bot_token"])
-        await b.send_message(int(cfg["owner_id"]), text)
-        await b.disconnect()
-    except Exception:  # noqa: BLE001
-        log.exception("Не удалось отправить уведомление о мёртвой сессии")
+    """Keep auth failures in the web-managed logs; never bootstrap a legacy bot."""
+    log.error("Telegram-профиль требует авторизации: %s", text)
 
 
 async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle_signals=True,
@@ -6413,7 +6405,8 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
     if not await client.is_user_authorized():
         log.error("Сессия не авторизована. Пройди авторизацию через Telegram-панель → Аккаунты.")
         await client.disconnect()
-        await _dead_session_notice(cfg, ddir, "❌ Сессия аккаунта не авторизована. Открой раздел «Аккаунты» в панели управления и нажми «Авторизовать».")
+        db.close()
+        await _dead_session_notice(cfg, ddir, "Сессия не авторизована. Открой раздел «Аккаунты» в веб-панели и пройди авторизацию.")
         return 2
     me = await client.get_me()
     if cfg.get("owner_id") != me.id:
