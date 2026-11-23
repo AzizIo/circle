@@ -1,3 +1,12 @@
+## 3.9.25 — Account Login and Profile Validation Hardening
+
+- Validate the primary Telegram API ID / API Hash before creating an additional profile, so an unusable profile is not created from an unconfigured base setup.
+- Give actionable Telegram login messages for invalid/banned numbers, invalid API credentials and FloodWait delays.
+- Validate the profile and session file before opening a temporary login client; close clients and clear auth state safely when profile persistence fails.
+- Preserve the selected authorization profile across page reloads and profile refreshes.
+- Extend browser timeouts for Telegram phone-code and 2FA operations to 120 seconds, and refresh account state when Telegram reports an already-authorized session.
+- Add end-to-end regression coverage for create → phone code → profile config persistence, verifying that the primary account configuration remains unchanged.
+
 ## 3.9.24 — Reliable Web Account Onboarding
 
 - Allow human-readable Russian/Ukrainian account labels; create a safe ASCII profile directory name automatically.
