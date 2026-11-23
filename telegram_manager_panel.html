@@ -67,7 +67,7 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
  html{scroll-behavior:auto}
  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
-@keyframes scanPulse{from{transform:translateX(-125%)}to{transform:translateX(330%)}}#scanProgressBar.indeterminate{width:32%;animation:scanPulse 1.4s ease-in-out infinite alternate}#scanProgressBar{transition:width .25s ease}.recipient-card.is-collapsed #recipientsPanelBody{display:none}.recipient-card .recipient-chevron{display:inline-block;transition:transform .18s ease;font-size:17px;line-height:1}.recipient-card.is-collapsed .recipient-chevron{transform:rotate(-90deg)}.recipient-card #toggleRecipientsPanel{display:inline-flex;align-items:center;gap:8px}.recipient-card #recipientActionFeedback{min-height:18px}.recipient-card #recipientActionFeedback[data-state="error"]{color:#ff9eaa}.recipient-card #recipientActionFeedback[data-state="success"]{color:#86e6b4}.recipient-card #recipientActionFeedback[data-state="busy"]{color:#f5d38e}#archiveCatalogFeedback[data-state="busy"],#archiveMediaFeedback[data-state="busy"]{color:var(--yellow)}#archiveCatalogFeedback[data-state="success"],#archiveMediaFeedback[data-state="success"]{color:var(--green)}#archiveCatalogFeedback[data-state="error"],#archiveMediaFeedback[data-state="error"]{color:var(--red)}/* 3.9.12 — responsive top bar and explicit token state */
+@keyframes scanPulse{from{transform:translateX(-125%)}to{transform:translateX(330%)}}#scanProgressBar.indeterminate{width:32%;animation:scanPulse 1.4s ease-in-out infinite alternate}#scanProgressBar{transition:width .25s ease}.recipient-card.is-collapsed #recipientsPanelBody{display:none}.recipient-card .recipient-chevron{display:inline-block;transition:transform .18s ease;font-size:17px;line-height:1}.recipient-card.is-collapsed .recipient-chevron{transform:rotate(-90deg)}.recipient-card #toggleRecipientsPanel{display:inline-flex;align-items:center;gap:8px}.recipient-card #recipientActionFeedback{min-height:18px}.recipient-card #recipientActionFeedback[data-state="error"]{color:#ff9eaa}.recipient-card #recipientActionFeedback[data-state="success"]{color:#86e6b4}.recipient-card #recipientActionFeedback[data-state="busy"]{color:#f5d38e}#archiveCatalogFeedback[data-state="busy"],#archiveMediaFeedback[data-state="busy"]{color:var(--yellow)}#archiveCatalogFeedback[data-state="success"],#archiveMediaFeedback[data-state="success"]{color:var(--green)}#archiveCatalogFeedback[data-state="error"],#archiveMediaFeedback[data-state="error"]{color:var(--red)}/* 3.9.13 — responsive top bar and explicit token state */
 .topbar{display:grid;grid-template-columns:minmax(180px,1fr) minmax(0,auto);gap:18px;align-items:center;min-height:72px}
 .crumb{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .toptools{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap;min-width:0;max-width:100%}
@@ -93,9 +93,10 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
  .token-input{width:100%;max-width:none;min-width:0}
  #changeToken{grid-column:1/-1;justify-self:start}
 }
+</style></head><body>
 <div class="app">
 <aside class="sidebar">
-<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9.12</small></div></div>
+<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9.13</small></div></div>
 <div><div class="navlabel">Рабочее пространство</div><nav class="nav" id="nav">
 <a href="#overview" data-page="overview" class="active"><span class="ico">◈</span>Обзор</a>
 <a href="#chats" data-page="chats"><span class="ico">▤</span>Чаты / Cleaner</a>
