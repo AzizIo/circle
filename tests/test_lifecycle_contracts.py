@@ -133,3 +133,15 @@ def test_autosub_listener_attaches_only_for_active_campaign():
     web_source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
     settings = _block(web_source, "    async def settings(self, request):", "    def _archive_connection")
     assert "bc._stop_autosub_worker()" in settings
+
+
+def test_archive_target_is_optional_for_web_managed_accounts():
+    helper = _block(SOURCE, "def account_cfg_problems(cfg: dict)", "def setup_logging(")
+    assert 'problem.startswith("ID группы-форума")' in helper
+    manager = _block(SOURCE, "class AccountManager:", "#  Бот-панель")
+    start = _block(manager, "    async def start_profile(", "    async def _run_profile(")
+    login = _block(manager, "    async def begin_login(", "    async def submit_code(")
+    assert "account_cfg_problems(cfg)" in start
+    assert "account_cfg_problems(cfg)" in login
+    host = _block(SOURCE, "async def run_web_manager_host(", "async def run_all_accounts(")
+    assert "account_cfg_problems(cfg)" not in host
