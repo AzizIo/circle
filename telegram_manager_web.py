@@ -616,12 +616,14 @@ class TelegramManagerRuntime:
         pending_not_selected = pending_ids.difference(current_allowlist)
         remaining_not_selected = pending_ids.difference(completed_ids).difference(current_allowlist)
         progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
+        task = getattr(bc, "task", None)
+        worker_busy = bool(getattr(bc, "running", False) or (task is not None and not task.done()))
         has_pending_wave = isinstance(state.get("pending_wave"), dict)
         try:
             ends_at = float(state.get("end") or 0)
         except (TypeError, ValueError, OverflowError):
             ends_at = 0.0
-        resume_available = bool(has_pending_wave and not uncertain_deliveries
+        resume_available = bool(has_pending_wave and not uncertain_deliveries and not worker_busy
                                 and state.get("active") is True
                                 and math.isfinite(ends_at) and ends_at > time.time())
         return {
@@ -632,7 +634,8 @@ class TelegramManagerRuntime:
             "pending_not_selected": len(pending_not_selected),
             "pending_remaining_not_selected": len(remaining_not_selected),
             "pending_completed_not_selected": len(pending_not_selected.intersection(completed_ids)),
-            "running": bool(bc.running), "status": bc.short(),
+            "running": worker_busy,
+            "status": ("⏳ завершается" if worker_busy and not getattr(bc, "running", False) else bc.short()),
             "active": bool(state.get("active")), "end": state.get("end", 0),
             "has_pending_wave": has_pending_wave, "resume_available": resume_available,
             "uncertain_deliveries": uncertain_deliveries,
@@ -1154,6 +1157,9 @@ class TelegramManagerRuntime:
     async def select_broadcast_post(self, request):
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
+        task = getattr(bc, "task", None)
+        if bc.running or (task is not None and not task.done()):
+            raise web.HTTPConflict(text="Кампания ещё завершает остановку. Проверка отправки станет доступна через несколько секунд.")
         try:
             payload = await request.json()
             post_id = int(payload.get("post_id", 0))
@@ -1330,8 +1336,9 @@ class TelegramManagerRuntime:
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
         cfg = self.configs[name]
-        if bc.running:
-            raise web.HTTPConflict(text="Кампания уже выполняется для этого аккаунта")
+        task = getattr(bc, "task", None)
+        if bc.running or (task is not None and not task.done()):
+            raise web.HTTPConflict(text="Кампания ещё выполняется или сохраняет результат. Повтори после завершения операции.")
         try:
             payload = await request.json()
             if not isinstance(payload, dict) or payload.get("confirmed") is not True:
