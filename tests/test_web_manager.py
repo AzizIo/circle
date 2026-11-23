@@ -155,10 +155,6 @@ class WebManagerTests(unittest.TestCase):
                     self.assertTrue(fake.disconnected)
                     self.assertNotIn("work", manager.auth_flows)
                 finally:
-                    await asyncio.gather(
-                        *(m._discard_auth(n) for n,m in []),
-                        return_exceptions=True,
-                    )
                     core.make_client = old_make_client
                     core.BASE, core.CONFIG_PATH, core.DEFAULT_CONFIG_PATH, core.ACCOUNTS_DIR = previous
         asyncio.run(run())
