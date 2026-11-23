@@ -1,5 +1,11 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.13 — Restore Panel HTML Document Structure
+
+- Fixed the missing closing style/head/body tags after the responsive top-bar CSS so the browser parses and renders the entire application again.
+- Added a regression test that verifies the document has a closed style block and a body before the application root.
+
+
 ## 3.9.12 — Safer Session UI & Broadcast Validation
 
 - Stop echoing the stored access token into the password field after login; show an access-ready state and expose the field only when the user chooses to change the key.
