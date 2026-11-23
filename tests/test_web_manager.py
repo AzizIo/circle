@@ -521,6 +521,21 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('hint.dataset.state="error"', html)
         self.assertIn("Остановка отменена. Кампания продолжает работу.", html)
 
+    def test_archive_ui_shows_load_state_and_ignores_stale_media_responses(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('id="archiveCatalogFeedback"', html)
+        self.assertIn('id="archiveMediaFeedback"', html)
+        self.assertIn('aria-busy="false"', html)
+        self.assertIn('S.archiveTotal=Number(data.total)||0', html)
+        self.assertIn('S.archiveMediaTotal=Number(d.total)||0', html)
+        self.assertIn('const current=()=>S.profile===profile&&Number(S.archiveUser)===user&&S.archiveMediaPage===page&&S.latest.archiveMedia===version', html)
+        self.assertIn('Загружаю записи медиа…', html)
+        self.assertIn('Ожидаю подтверждение…', html)
+        self.assertIn('Очистка отменена. Файлы не удалены.', html)
+        self.assertIn('S.archiveUser=null', html)
+
     def test_broadcast_recipient_lists_are_isolated_by_profile(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
