@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.15 — Stable Recipient Snapshot & One-Click Start
+
+- Replaced the fragile typed `START <count>` challenge with one explicit launch dialog that displays the account, current recipient count, interval, and duration.
+- The launch request now carries the exact recipient IDs shown to the user; the server intersects that snapshot with the current saved allowlist and live dialogs so additional groups cannot be introduced by a changing count.
+- When Telegram refresh prunes stale recipients, the server returns the actual selected IDs and count and the panel updates its visible selection to match.
+- Added regression tests for one-click confirmation and recipient-count changes during Telegram dialog refresh.
+
+
 ## 3.9.14 — Fast Broadcast Status & Safe Recipient Feedback
 
 - Removed the Telegram Saved Messages preview lookup from the frequently polled broadcast-status endpoint; it now returns local campaign state and cached post details only.
