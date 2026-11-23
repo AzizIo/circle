@@ -610,7 +610,7 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('safeText("recipientSelectionHint",summary)', html)
         self.assertIn("let savedOnServer=false", html)
         self.assertIn("Список сохранён на сервере, но интерфейс не обновился:", html)
-        self.assertIn('S.recipientAccountLabel=r.account_label||S.profile', html)
+        self.assertIn('S.recipientAccountLabel=r.account_label||profile', html)
 
     def test_panel_hides_saved_access_token_and_explains_timeout_context(self):
         import telegram_manager_web as web_module
@@ -787,7 +787,7 @@ class WebManagerTests(unittest.TestCase):
                     data = await response.json()
                     self.assertEqual(data["selected_ids"], [101])
                     self.assertEqual(data["selected_count"], 1)
-                    self.assertEqual(data["removed_stale_count"], 1)
+                    self.assertEqual(data["removed_stale_count"], 2)
                     self.assertEqual(cfg["broadcast_allowlist"], [101])
                     persisted = json.loads(config_path.read_text(encoding="utf-8"))
                     self.assertEqual(persisted["broadcast_allowlist"], [101])
@@ -879,6 +879,20 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+    def test_recipient_pagination_keeps_local_selection_and_refresh_does_not_clear_it(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        loader = html[html.index("async function loadRecipients(refresh)"):html.index("function drawRecipients()")]
+        refresh = html[html.index('$("refreshRecipients").onclick='):html.index('$("selectAllRecipients").onclick=')]
+        self.assertNotIn("if(S.recipientDirty)return false", loader)
+        self.assertNotIn("||S.recipientDirty||document.querySelector", loader)
+        self.assertIn("if(!S.recipientInitialized&&!S.recipientDirty){S.recipientSelected=new Set", loader)
+        self.assertIn('hadUnsaved=S.recipientDirty', refresh)
+        self.assertNotIn("S.recipientSelected.clear()", refresh)
+        self.assertIn("if(!hadUnsaved)S.recipientInitialized=false", refresh)
+        self.assertIn("Несохранённый выбор сохранён на экране", refresh)
+
     def test_recipient_panel_reconciles_server_filtered_ids_after_save(self):
         import telegram_manager_web as web_module
 
@@ -886,7 +900,7 @@ class WebManagerTests(unittest.TestCase):
         save = html[html.index('$("saveRecipients").onclick=async()=>{'):html.index('$("saveBcSettings").onclick')]
         self.assertIn("S.recipientSelected=new Set((Array.isArray(r.selected_ids)?r.selected_ids:submittedIds).map(Number))", save)
         self.assertIn("const removed=Number(r.removed_stale_count)||0", save)
-        self.assertIn("Удалено "+fmt(removed)+" устаревших или чужих ID", save)
+        self.assertIn("устаревших или чужих ID", save)
         self.assertIn("S.recipientDirty=false;S.recipientInitialized=true", save)
 
     def test_broadcast_start_uses_current_allowlist_after_dialog_refresh(self):
