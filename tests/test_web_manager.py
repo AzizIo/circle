@@ -624,7 +624,10 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('const timeoutMs=slowTelegramRequest?120000:30000', html)
         self.assertIn('Запрос "+method+" "+path+" не завершился за "', html)
         self.assertIn('Нет подтверждения от сервера. Проверь текущий статус кампании', html)
-        self.assertIn('Сохранённый список подтверждён для ', html)
+        start = html[html.index('$("startBc").onclick=async()=>{'):html.index('$("stopBc").onclick=async()=>{')]
+        self.assertIn('await askConfirm(', start)
+        self.assertIn('"Запустить кампанию?"', start)
+        self.assertNotIn('START ', start)
 
     def test_account_actions_expose_pending_and_accepted_states(self):
         import telegram_manager_web as web_module
