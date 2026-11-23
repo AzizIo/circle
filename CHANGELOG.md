@@ -1,3 +1,10 @@
+## 3.9.23 — Safe Broadcast Checkpoint Recovery
+
+- Made recipient-list reads side-effect free: periodic UI polling no longer rewrites or prunes the saved allowlist when Telegram returns an incomplete dialog snapshot.
+- Separated the immutable recipient snapshot of an unfinished wave from the editable list used for future waves.
+- Added an explicit, confirmed recovery action that resumes the saved post and remaining chat IDs only; already-completed chats are not replayed, and an old checkpoint cannot be silently replaced with a new campaign.
+- Updated the panel to explain the difference between the saved wave and the current recipient selection.
+
 ## 3.9.22 — Independent Web Control Plane
 
 - Added a standalone `web` host that runs the authenticated local web panel without opening a Telegram session or starting an account worker.
