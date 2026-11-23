@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.15"
+APP_VERSION = "3.9.16"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -1038,35 +1038,67 @@ class TelegramManagerRuntime:
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
         refresh = request.query.get("refresh") == "1"
-        chats = await bc.chat_list(refresh=refresh)
+        chats = (await bc.chat_list(refresh=True) if refresh
+                 else await self._validated_broadcast_chats(bc))
         try:
             offset = max(0, int(request.query.get("offset", "0")))
             limit = max(1, min(3000, int(request.query.get("limit", "100"))))
         except ValueError:
             raise web.HTTPBadRequest(text="Некорректная пагинация")
+
         cfg = self.configs[name]
-        allowlist = set()
-        for raw_id in cfg.get("broadcast_allowlist", []):
+        live_ids = set()
+        for raw_id, _title in chats:
             try:
-                if isinstance(raw_id, bool):
-                    continue
-                value = int(raw_id)
-                if value:
-                    allowlist.add(value)
+                chat_id = int(raw_id)
             except (TypeError, ValueError, OverflowError):
                 continue
+            if chat_id:
+                live_ids.add(chat_id)
+
+        # The persisted allowlist can outlive Telegram memberships. Never send
+        # IDs absent from this profile's current dialog snapshot back to the UI.
+        raw_allowlist = cfg.get("broadcast_allowlist", [])
+        parsed_allowlist = set()
+        malformed_count = 0
+        if isinstance(raw_allowlist, list):
+            for raw_id in raw_allowlist:
+                try:
+                    if isinstance(raw_id, bool):
+                        malformed_count += 1
+                        continue
+                    chat_id = int(raw_id)
+                    if chat_id:
+                        parsed_allowlist.add(chat_id)
+                    else:
+                        malformed_count += 1
+                except (TypeError, ValueError, OverflowError):
+                    malformed_count += 1
+        elif raw_allowlist not in (None, ""):
+            malformed_count = 1
+
+        selected_ids = sorted(parsed_allowlist.intersection(live_ids))
+        removed_stale_count = len(parsed_allowlist.difference(live_ids)) + malformed_count
+        normalized_allowlist = selected_ids
+        if raw_allowlist != normalized_allowlist:
+            cfg["broadcast_allowlist"] = normalized_allowlist
+            self._save_config(cfg)
+
         items = []
         for cid, title in chats[offset:offset + limit]:
             cid = int(cid)
             items.append({"id": cid, "title": title, "status": bc.chat_status(cid),
-                          "selected": cid in allowlist})
+                          "selected": cid in set(selected_ids)})
         return web.json_response({
             "profile": name,
             "account_label": str(cfg.get("account_label") or name),
             "account_id": int(cfg.get("owner_id") or 0),
             "total": len(chats), "items": items, "offset": offset, "limit": limit,
             "allowlist_only": bool(cfg.get("broadcast_allowlist_only")),
-            "selected_count": len(allowlist), "selected_ids": sorted(allowlist),
+            "selected_count": len(selected_ids), "selected_ids": selected_ids,
+            "removed_stale_count": removed_stale_count,
+            "available_count": sum(1 for cid in live_ids if bc.chat_status(cid) == "ok"),
+            "excluded_count": sum(1 for cid in live_ids if bc.chat_status(cid) != "ok"),
         })
 
     async def set_recipients(self, request):
@@ -1074,40 +1106,52 @@ class TelegramManagerRuntime:
         bc = self._get_broadcaster(name)
         try:
             payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Ожидался объект со списком получателей")
+
             if payload.get("select_all") is True:
                 live_chats = await bc.chat_list(refresh=True)
+                live = {int(cid) for cid, _ in live_chats}
                 ids = [int(cid) for cid, _ in live_chats if bc.chat_status(int(cid)) == "ok"]
+                requested_count = len(ids)
+                removed_stale_count = 0
                 if len(ids) > 3000:
                     raise ValueError("В аккаунте больше 3000 доступных чатов. Используй фильтры и выбор страницами.")
-                live = {int(cid) for cid, _ in live_chats}
             else:
                 raw_ids = payload.get("chat_ids")
                 if not isinstance(raw_ids, list) or len(raw_ids) > 3000:
                     raise ValueError("chat_ids должен быть списком максимум из 3000 чатов")
-                ids = []
+                requested_ids = []
                 for raw in raw_ids:
                     if isinstance(raw, bool):
                         raise ValueError("Некорректный ID чата")
                     cid = int(raw)
                     if cid == 0:
                         raise ValueError("Некорректный ID чата")
-                    ids.append(cid)
-                ids = list(dict.fromkeys(ids))
-                live = {int(cid) for cid, _ in await self._validated_broadcast_chats(bc)}
-            unknown = [cid for cid in ids if cid not in live]
-            if unknown:
-                raise ValueError(f"Среди выбранных есть чаты, которых нет в текущем аккаунте: {len(unknown)}")
+                    requested_ids.append(cid)
+                requested_ids = list(dict.fromkeys(requested_ids))
+                requested_count = len(requested_ids)
+                live_chats = await self._validated_broadcast_chats(bc)
+                live = {int(cid) for cid, _ in live_chats}
+                # Stale or foreign-profile IDs are dropped, not allowed to block
+                # saving the valid part of the user's selection.
+                ids = [cid for cid in requested_ids if cid in live]
+                removed_stale_count = len(requested_ids) - len(ids)
+
             cfg = self.configs[name]
             cfg["broadcast_allowlist"] = ids
             cfg["broadcast_allowlist_only"] = True
             self._save_config(cfg)
+            available_count = sum(1 for cid in live if bc.chat_status(cid) == "ok")
             return web.json_response({
                 "ok": True, "profile": name,
                 "account_label": str(cfg.get("account_label") or name),
                 "account_id": int(cfg.get("owner_id") or 0),
                 "selected_count": len(ids), "selected_ids": ids,
-                "available_count": sum(1 for cid in live if bc.chat_status(cid) == "ok"),
-                "excluded_count": len(live) - sum(1 for cid in live if bc.chat_status(cid) == "ok"),
+                "requested_count": requested_count,
+                "removed_stale_count": removed_stale_count,
+                "available_count": available_count,
+                "excluded_count": len(live) - available_count,
                 "allowlist_only": True,
             })
         except (ValueError, TypeError, OSError) as exc:
