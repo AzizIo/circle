@@ -613,6 +613,26 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn("Список сохранён на сервере, но интерфейс не обновился:", html)
         self.assertIn('S.recipientAccountLabel=r.account_label||profile', html)
 
+    def test_logs_keep_latest_filter_request_when_previous_load_is_in_flight(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn("logLoading:false,logReloadPending:false", html)
+        load = html[html.index("async function loadLogs()"):html.index('$("loadLogs").onclick=')]
+        self.assertIn("if(S.logLoading){S.logReloadPending=true;return}", load)
+        self.assertIn("const rerun=S.logReloadPending;S.logReloadPending=false", load)
+        self.assertIn("Promise.resolve().then(()=>loadLogs())", load)
+        self.assertIn('document.querySelector(".page.active")?.id!=="page-logs"', load)
+
+    def test_chat_scan_progress_is_bound_to_the_profile_that_started_it(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        scan = html[html.index("async function scanChats()"):html.index('$("scanChats").onclick=')]
+        self.assertIn("const profile=S.profile", scan)
+        self.assertIn('if(S.profile!==profile)return;r=await api("/api/scans/"+a.scan_id)', scan)
+        self.assertIn('if(S.profile===profile)toast(e.message,"error")', scan)
+
     def test_broadcaster_exposes_clear_terminal_start_reasons(self):
         expected = {
             "nopost": "Избранном",
