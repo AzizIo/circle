@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.14 — Fast Broadcast Status & Safe Recipient Feedback
+
+- Removed the Telegram Saved Messages preview lookup from the frequently polled broadcast-status endpoint; it now returns local campaign state and cached post details only.
+- Cache a post preview after explicit post selection or campaign validation; after a restart, return the selected post ID without pretending its text/media preview was refreshed.
+- Make recipient counter rendering null-safe and distinguish a server-side successful save from a subsequent UI rendering problem.
+- Added regression tests proving status polling does not call Telegram and recipient saves do not falsely report failure after being accepted.
+
+
 ## 3.9.13 — Restore Panel HTML Document Structure
 
 - Fixed the missing closing style/head/body tags after the responsive top-bar CSS so the browser parses and renders the entire application again.
