@@ -3241,17 +3241,36 @@ class Broadcaster:
                 # the owner can select another post rather than retrying this source.
                 break
             if ok:
+                # Only a Telegram Message with an ID is counted as confirmed delivery.
                 r["ok"] += 1
+                if pending is not None:
+                    completed.add(chat_id)
+                    self._save_pending_progress(pending, r, completed)
             else:
                 r["fail"] += 1
                 r["errors"][reason] += 1
                 r["failed"].append((name, reason))
-            # Persist after each confirmed attempt. On restart, only remaining chats
-            # will be retried; a crash between Telegram's ack and this write can still
-            # duplicate at most the single in-flight chat (Telegram has no idempotency key).
-            if pending is not None:
-                completed.add(int(chat.id))
-                self._save_pending_progress(pending, r, completed)
+                if reason == "uncertain":
+                    # The send may have reached Telegram but its acknowledgement was
+                    # lost. Keep the chat out of completed_ids and stop this wave;
+                    # never silently report success or replay an ambiguous send.
+                    if pending is not None:
+                        self._save_pending_progress(pending, r, completed)
+                    await self.notifier.alert(
+                        "broadcast-uncertain",
+                        f"⚠️ Неизвестен результат отправки в «{name}». "
+                        "Чат оставлен в незавершённой очереди: проверь его вручную перед повтором.",
+                        1800,
+                    )
+                    self._abort = True
+                    self._fatal = True
+                    self._fatal_reason = "uncertain_delivery"
+                    break
+                # Definite Telegram rejections are recorded as failures and closed
+                # for this wave to avoid endless retries of permanent chat errors.
+                if pending is not None:
+                    completed.add(chat_id)
+                    self._save_pending_progress(pending, r, completed)
             if not ok and reason in FAST_FAIL:
                 await asyncio.sleep(self.FAIL_DELAY)
                 continue
