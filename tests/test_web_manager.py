@@ -530,6 +530,8 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('aria-busy="false"', html)
         self.assertIn('S.archiveTotal=Number(data.total)||0', html)
         self.assertIn('S.archiveMediaTotal=Number(d.total)||0', html)
+        self.assertIn('if(S.profile!==profile||S.latest.archive!==version)return;', html)
+        self.assertIn('if(S.profile===profile&&S.latest.archive===version){list.setAttribute("aria-busy","false");updateControls(false)}', html)
         self.assertIn('const current=()=>S.profile===profile&&Number(S.archiveUser)===user&&S.archiveMediaPage===page&&S.latest.archiveMedia===version', html)
         self.assertIn('Загружаю записи медиа…', html)
         self.assertIn('Ожидаю подтверждение…', html)
