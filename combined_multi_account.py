@@ -1496,16 +1496,15 @@ class Broadcaster:
         self._consec_spam = 0
         self._scan_task = None         # идущее сейчас сканирование диалогов (чтобы не запускать два одновременно)
         self._apply_delays()
-        # Link capture is session-level, but queued actions are executed only while
-        # a broadcast campaign is active. The durable queue remains available offline.
+        # Both link capture and queue execution are campaign-scoped. The durable
+        # SQLite queue remains on disk while a campaign is stopped.
         self._subscribe_tasks: set[asyncio.Task] = set()  # legacy batch tasks; retained for graceful migration
         self._autosub_worker_task: asyncio.Task | None = None
         self._autosub_wakeup = asyncio.Event()
         self._autosub_worker_stopping = False
-        if self.enabled:
-            client.add_event_handler(self._on_mention, events.NewMessage(incoming=True))
-            # Some bots edit the same requirement message to add/fix invite buttons.
-            client.add_event_handler(self._on_mention, events.MessageEdited(incoming=True))
+        self._autosub_listener_attached = False
+        self._autosub_new_message_event = events.NewMessage(incoming=True)
+        self._autosub_message_edited_event = events.MessageEdited(incoming=True)
 
     def _apply_delays(self):
         """Паузы берём из config.json (меняются в боте, действуют со следующей волны)."""
@@ -2398,13 +2397,45 @@ class Broadcaster:
             self._ensure_autosub_worker()
         return {"inserted": inserted, "duplicates": duplicates}
 
+    def _attach_autosub_listener(self) -> None:
+        if self._autosub_listener_attached or not self.enabled:
+            return
+        try:
+            self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)
+            # Some bots edit the same requirement message to add/fix invite buttons.
+            self.client.add_event_handler(self._on_mention, self._autosub_message_edited_event)
+            self._autosub_listener_attached = True
+        except Exception:
+            self._detach_autosub_listener()
+            blog.exception("Не удалось включить сбор ссылок автоподписки")
+
+    def _detach_autosub_listener(self) -> None:
+        if not self._autosub_listener_attached:
+            return
+        try:
+            self.client.remove_event_handler(self._on_mention, self._autosub_new_message_event)
+            self.client.remove_event_handler(self._on_mention, self._autosub_message_edited_event)
+        except Exception:
+            blog.exception("Не удалось отключить слушатель автоподписки")
+        finally:
+            self._autosub_listener_attached = False
+
+    def _stop_autosub_worker(self) -> None:
+        self._detach_autosub_listener()
+        self._autosub_wakeup.set()
+        worker = self._autosub_worker_task
+        if worker and not worker.done():
+            worker.cancel()
+
     def _ensure_autosub_worker(self, *, manual_resume: bool = False):
         if manual_resume:
             self.autosub_queue.clear_pause()
         if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
                 or not self.running or not self.state.get("active")
                 or self._autosub_worker_stopping):
+            self._stop_autosub_worker()
             return None
+        self._attach_autosub_listener()
         if self._autosub_worker_task is None or self._autosub_worker_task.done():
             self._autosub_worker_task = asyncio.create_task(
                 self._autosub_worker_loop(), name=f"autosub-worker:{self.ddir.name}")
@@ -2738,7 +2769,8 @@ class Broadcaster:
 
     async def _on_mention(self, event):
         try:
-            if not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True):
+            if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
+                    or not self.running or not self.state.get("active")):
                 return
             message = getattr(event, "message", None)
             if (message is None or bool(getattr(event, "is_private", False))
@@ -2819,6 +2851,7 @@ class Broadcaster:
     async def close(self):
         """Finish/stop background work before its Telegram client is disconnected."""
         self._autosub_worker_stopping = True
+        self._stop_autosub_worker()
         if self._autosub_worker_task and not self._autosub_worker_task.done():
             self._autosub_worker_task.cancel()
             await asyncio.gather(self._autosub_worker_task, return_exceptions=True)
@@ -3461,10 +3494,9 @@ class Broadcaster:
             self.running = False
             # Stop link-action execution as soon as a campaign ends. Queue rows
             # remain durable and are resumed only by the next explicit campaign.
-            self._autosub_wakeup.set()
+            self._stop_autosub_worker()
             worker = self._autosub_worker_task
             if worker and not worker.done():
-                worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
             self._autosub_worker_task = None
             if not self.suspending:
@@ -3495,8 +3527,7 @@ class Broadcaster:
         self.suspending = False
         self.stop_event.clear()
         self.task = asyncio.create_task(self._job(), name=f"broadcast:{self.ddir.name}")
-        if self.cfg.get("broadcast_auto_subscribe", True):
-            self._ensure_autosub_worker()
+        self._ensure_autosub_worker()
 
     def start(self, interval_min, hours) -> bool:
         if self.running:
@@ -3534,19 +3565,13 @@ class Broadcaster:
     def stop(self):
         self.suspending = False
         self.stop_event.set()
-        self._autosub_wakeup.set()
-        worker = self._autosub_worker_task
-        if worker and not worker.done():
-            worker.cancel()
+        self._stop_autosub_worker()
 
     def suspend(self):
         """Остановить кампанию при выключении сервиса, сохранив checkpoint и очередь."""
         self.suspending = True
         self.stop_event.set()
-        self._autosub_wakeup.set()
-        worker = self._autosub_worker_task
-        if worker and not worker.done():
-            worker.cancel()
+        self._stop_autosub_worker()
 
     def set_interval(self, minutes):
         old_interval = max(1, int(self.state.get("interval", 60)))
