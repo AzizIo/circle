@@ -487,6 +487,26 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('id="bcAccountSource"', web_module.INDEX_HTML)
         self.assertIn('id="bcStartFeedback"', web_module.INDEX_HTML)
 
+    def test_broadcast_recipient_panel_collapse_and_action_feedback(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('id="recipientsCard"', html)
+        self.assertIn('id="recipientsPanelBody"', html)
+        self.assertIn('id="toggleRecipientsPanel"', html)
+        self.assertIn('aria-controls="recipientsPanelBody"', html)
+        self.assertIn('function recipientsCollapsedKey()', html)
+        self.assertIn('localStorage.setItem(recipientsCollapsedKey()', html)
+        self.assertIn('function restoreRecipientsCollapsed()', html)
+        self.assertIn("restoreRecipientsCollapsed();", html)
+        self.assertIn(".recipient-card.is-collapsed #recipientsPanelBody{display:none}", html)
+        self.assertIn('id="recipientActionFeedback"', html)
+        self.assertIn('id="recipientCollapsedSummary"', html)
+        self.assertIn('hint.dataset.state="busy"', html)
+        self.assertIn('hint.dataset.state="success"', html)
+        self.assertIn('hint.dataset.state="error"', html)
+        self.assertIn("Остановка отменена. Кампания продолжает работу.", html)
+
     def test_broadcast_recipient_lists_are_isolated_by_profile(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
