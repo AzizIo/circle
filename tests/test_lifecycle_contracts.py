@@ -149,3 +149,73 @@ def test_archive_target_is_optional_for_web_managed_accounts():
     assert "account_cfg_problems(cfg)" in login
     host = _block(SOURCE, "async def run_web_manager_host(", "async def run_all_accounts(")
     assert "account_cfg_problems(cfg)" not in host
+
+
+def test_new_account_profile_gets_its_own_config_and_data_directory(tmp_path):
+    import json
+    from unittest.mock import patch
+    import combined_multi_account as core
+
+    default_config = tmp_path / "config.json"
+    accounts_dir = tmp_path / "accounts"
+    default_config.write_text(json.dumps({
+        "api_id": 12345,
+        "api_hash": "test-api-hash",
+        "owner_id": 777,
+        "account_label": "Main",
+        "data_dir": "data",
+        "target_chat_id": -1001234567890,
+        "broadcast_allowlist_only": True,
+        "broadcast_allowlist": [-100111],
+        "session_name": "circles",
+    }), encoding="utf-8")
+
+    with (
+        patch.object(core, "BASE", tmp_path),
+        patch.object(core, "DEFAULT_CONFIG_PATH", default_config),
+        patch.object(core, "ACCOUNTS_DIR", accounts_dir),
+        patch.object(core, "CONFIG_PATH", default_config),
+    ):
+        manager = core.AccountManager(owner_id=777)
+        created_path = manager.add_profile("backup", "Резервный аккаунт")
+        cfg = json.loads(created_path.read_text(encoding="utf-8"))
+
+    assert created_path == accounts_dir / "backup" / "config.json"
+    assert cfg["account_label"] == "Резервный аккаунт"
+    assert cfg["owner_id"] == 0
+    assert cfg["api_id"] == 12345
+    assert cfg["api_hash"] == "test-api-hash"
+    assert cfg["session_name"] == "circles"
+    assert cfg["data_dir"] == "accounts/backup/data"
+    assert cfg["broadcast_allowlist_only"] is False
+    assert cfg["broadcast_allowlist"] == []
+    assert Path(tmp_path / cfg["data_dir"]) != tmp_path / "data"
+    assert not (tmp_path / "data" / "circles.session").exists()
+
+
+def test_new_account_profile_refuses_to_reuse_an_orphan_session_directory(tmp_path):
+    from unittest.mock import patch
+    import combined_multi_account as core
+
+    default_config = tmp_path / "config.json"
+    default_config.write_text('{"api_id": 1, "api_hash": "hash", "data_dir": "data"}',
+                              encoding="utf-8")
+    accounts_dir = tmp_path / "accounts"
+    orphan = accounts_dir / "backup" / "data"
+    orphan.mkdir(parents=True)
+    (orphan / "circles.session").write_bytes(b"do-not-reuse")
+
+    with (
+        patch.object(core, "BASE", tmp_path),
+        patch.object(core, "DEFAULT_CONFIG_PATH", default_config),
+        patch.object(core, "ACCOUNTS_DIR", accounts_dir),
+        patch.object(core, "CONFIG_PATH", default_config),
+    ):
+        manager = core.AccountManager(owner_id=777)
+        try:
+            manager.add_profile("backup", "Backup")
+        except FileExistsError as exc:
+            assert "уже существует" in str(exc) or "содержит данные" in str(exc)
+        else:
+            raise AssertionError("Orphan session directory must not be reused by a new account")
+    assert (orphan / "circles.session").read_bytes() == b"do-not-reuse"

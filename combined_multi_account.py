@@ -310,16 +310,16 @@ except ImportError as _web_import_error:
     logging.getLogger("circles").warning("Web Manager не загружен: %s. Установите зависимости из requirements-smart-cleaner.txt", _web_import_error)
 
 
-def add_account_profile(name: str) -> Path:
+def add_account_profile(name: str, label: str | None = None) -> Path:
     """Clone safe defaults into an isolated account profile; never clone auth/session data."""
     target = profile_config_path(name)
-    if target.exists():
-        raise FileExistsError(f"Профиль '{name}' уже существует")
+    if target.exists() or (target.parent.exists() and any(target.parent.iterdir())):
+        raise FileExistsError(f"Профиль '{label or name}' уже существует или его папка содержит данные")
     base_cfg = read_profile_config(DEFAULT_CONFIG_PATH)
     cfg = dict(base_cfg)
     cfg.update({
         "owner_id": 0,
-        "account_label": name,
+        "account_label": str(label or name)[:80],
         "session_name": "circles",
         "data_dir": str(Path("accounts") / name / "data"),
         "bot_token": "",             # legacy compatibility; web panel requires no Telegram bot token
@@ -3809,8 +3809,8 @@ class AccountManager:
             logger.addHandler(handler)
         self._logging_profiles.add(name)
 
-    def add_profile(self, name: str) -> Path:
-        return add_account_profile(name)
+    def add_profile(self, name: str, label: str | None = None) -> Path:
+        return add_account_profile(name, label=label)
 
     async def start_existing(self) -> list[str]:
         started = []
@@ -3962,7 +3962,7 @@ class AccountManager:
             ddir = data_dir(cfg)
             problems = account_cfg_problems(cfg)
             if problems:
-                return "error", "Сначала исправь настройки основного профиля: " + "; ".join(problems)
+                return "error", f"Сначала исправь настройки профиля «{name}»: " + "; ".join(problems)
             client = make_client(cfg, ddir)
             await client.connect()
             if await client.is_user_authorized():

@@ -66,6 +66,115 @@ class WebManagerTests(unittest.TestCase):
         asyncio.run(run())
 
 
+    def test_create_account_accepts_russian_label_and_returns_safe_profile_name(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class Manager:
+                    def __init__(self):
+                        self.created = None
+                    def add_profile(self, name, label):
+                        self.created = (name, label)
+                        if name == "existing":
+                            raise FileExistsError("Профиль уже существует")
+                        return Path(td) / name / "config.json"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                manager = Manager()
+                runtime.set_account_manager(manager)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/accounts", runtime.create_account)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    response = await client.post("/api/accounts", headers=headers,
+                                                 json={"name": "Рабочий аккаунт"})
+                    self.assertEqual(response.status, 201)
+                    data = await response.json()
+                    self.assertEqual(data["name"], "rabochiy-akkaunt")
+                    self.assertEqual(data["label"], "Рабочий аккаунт")
+                    self.assertEqual(manager.created, ("rabochiy-akkaunt", "Рабочий аккаунт"))
+                    self.assertIn("Теперь авторизуй Telegram", data["message"])
+
+                    duplicate = await client.post("/api/accounts", headers=headers,
+                                                   json={"name": "Existing"})
+                    self.assertEqual(duplicate.status, 409)
+                    self.assertIn("уже существует", await duplicate.text())
+
+                    empty = await client.post("/api/accounts", headers=headers, json={"name": "   "})
+                    self.assertEqual(empty.status, 400)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_account_login_routes_cover_phone_code_and_two_factor(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class Manager:
+                    async def begin_login(self, name, phone):
+                        self.phone_request = (name, phone)
+                        return "code", "Код отправлен"
+                    async def submit_code(self, name, code):
+                        self.code_request = (name, code)
+                        return "password", "Нужен пароль 2FA"
+                    async def submit_password(self, name, password):
+                        self.password_request = (name, password)
+                        return "done", "Аккаунт авторизован"
+
+                manager = Manager()
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.set_account_manager(manager)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/login/start", runtime.login_start)
+                app.router.add_post("/api/profiles/{name}/login/code", runtime.login_code)
+                app.router.add_post("/api/profiles/{name}/login/password", runtime.login_password)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    phone = await client.post("/api/profiles/work/login/start", headers=headers,
+                                              json={"phone": "+79991234567"})
+                    self.assertEqual(phone.status, 200)
+                    self.assertEqual((await phone.json())["stage"], "code")
+                    self.assertEqual(manager.phone_request, ("work", "+79991234567"))
+
+                    code = await client.post("/api/profiles/work/login/code", headers=headers,
+                                             json={"code": "12345"})
+                    self.assertEqual(code.status, 200)
+                    self.assertEqual((await code.json())["stage"], "password")
+                    self.assertEqual(manager.code_request, ("work", "12345"))
+
+                    password = await client.post("/api/profiles/work/login/password", headers=headers,
+                                                 json={"password": "test-2fa"})
+                    self.assertEqual(password.status, 200)
+                    self.assertEqual((await password.json())["stage"], "done")
+                    self.assertEqual(manager.password_request, ("work", "test-2fa"))
+
+                    empty_code = await client.post("/api/profiles/work/login/code", headers=headers,
+                                                   json={"code": ""})
+                    self.assertEqual(empty_code.status, 400)
+                    self.assertIn("Введи код", await empty_code.text())
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_account_panel_exposes_authorize_action_and_preserves_selected_auth_profile(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('data-authorize="', html)
+        self.assertIn('data-authorize]', html)
+        self.assertIn('oldAuth=$("authProfile").value', html)
+        self.assertIn('auth.value=authProfileExists?oldAuth:', html)
+        self.assertIn('$("authProfile").value=result.name', html)
+        self.assertIn("Создать и перейти к авторизации", html)
+        self.assertIn("Можно писать по-русски", html)
+        self.assertIn("Авторизовать", html)
+
     def test_single_chat_leave_route_executes_one_chat_and_updates_catalog(self):
         async def run():
             import time

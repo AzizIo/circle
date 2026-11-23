@@ -1,3 +1,12 @@
+## 3.9.24 — Reliable Web Account Onboarding
+
+- Allow human-readable Russian/Ukrainian account labels; create a safe ASCII profile directory name automatically.
+- Add a per-profile “Authorize” shortcut and make the create-profile flow continue directly to phone authorization.
+- Preserve the selected authorization profile across background profile-list refreshes.
+- Return consistent, actionable JSON errors for profile creation, phone-code and 2FA steps.
+- Keep each new Telegram session and data directory isolated; refuse to reuse orphan profile folders that already contain session data.
+- Add regression coverage for profile creation, phone → code → 2FA API stages, UI selection persistence, and storage isolation.
+
 ## 3.9.23 — Safe Broadcast Checkpoint Recovery
 
 - Made recipient-list reads side-effect free: periodic UI polling no longer rewrites or prunes the saved allowlist when Telegram returns an incomplete dialog snapshot.
