@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.11 — Archive Loading & Selection Feedback
+
+- Added persistent loading, success, and error feedback to archive catalogue and person-media navigation, with pagination controls disabled while requests are active.
+- Guarded archive media responses against profile, selected-person, and page changes so late responses cannot display one person’s records under another person.
+- Reset archive selection when switching Telegram profiles and show an explicit cancellation message before any media cleanup is performed.
+
+
 ## 3.9.10 — Account Action Feedback
 
 - Added in-progress button states and explicit server-response feedback for account start/stop, profile refresh/creation, and Telegram login steps.
