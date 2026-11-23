@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.16 — Recipient List Integrity
+
+- Validate saved recipient IDs against the selected profile's current dialog snapshot when loading the list, and prune stale IDs from the profile config.
+- Saving a selection now retains valid current-profile chat IDs and removes stale or foreign IDs instead of rejecting the entire selection.
+- Return the requested, retained, and removed counts so the panel can reconcile its checkboxes and report exactly how many stale IDs were discarded.
+- Add regression tests for stale saved IDs, mixed valid/stale selections, all-stale selections, and cross-profile IDs.
+
+
 ## 3.9.15 — Stable Recipient Snapshot & One-Click Start
 
 - Replaced the fragile typed `START <count>` challenge with one explicit launch dialog that displays the account, current recipient count, interval, and duration.
