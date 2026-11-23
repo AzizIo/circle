@@ -479,6 +479,101 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+    def test_broadcast_recipient_lists_are_isolated_by_profile(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                class FakeBroadcaster:
+                    def __init__(self, chats):
+                        self.chats = chats
+                    async def chat_list(self, refresh=False):
+                        return list(self.chats)
+                    def chat_status(self, chat_id):
+                        return "ok"
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                alpha_cfg = {"_config_path": str(Path(td) / "alpha.json"),
+                             "account_label": "Alpha phone", "owner_id": 1001,
+                             "broadcast_allowlist": [], "broadcast_allowlist_only": False}
+                beta_cfg = {"_config_path": str(Path(td) / "beta.json"),
+                            "account_label": "Beta phone", "owner_id": 2002,
+                            "broadcast_allowlist": [], "broadcast_allowlist_only": False}
+                runtime.register_profile("alpha", FakeClient(), alpha_cfg, Path(td) / "alpha")
+                runtime.register_profile("beta", FakeClient(), beta_cfg, Path(td) / "beta")
+                runtime.register_broadcaster("alpha", FakeBroadcaster([(101, "Alpha group")]))
+                runtime.register_broadcaster("beta", FakeBroadcaster([(202, "Beta group")]))
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/broadcast/recipients", runtime.recipients)
+                app.router.add_post("/api/profiles/{name}/broadcast/recipients", runtime.set_recipients)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    alpha = await client.get(
+                        "/api/profiles/alpha/broadcast/recipients", headers=headers)
+                    beta = await client.get(
+                        "/api/profiles/beta/broadcast/recipients", headers=headers)
+                    self.assertEqual(alpha.status, 200)
+                    self.assertEqual(beta.status, 200)
+                    a, b = await alpha.json(), await beta.json()
+                    self.assertEqual([item["id"] for item in a["items"]], [101])
+                    self.assertEqual([item["id"] for item in b["items"]], [202])
+                    self.assertEqual((a["profile"], a["account_id"]), ("alpha", 1001))
+                    self.assertEqual((b["profile"], b["account_id"]), ("beta", 2002))
+
+                    wrong_account = await client.post(
+                        "/api/profiles/alpha/broadcast/recipients", headers=headers,
+                        json={"chat_ids": [202]},
+                    )
+                    self.assertEqual(wrong_account.status, 400)
+                    self.assertEqual(alpha_cfg["broadcast_allowlist"], [])
+
+                    saved = await client.post(
+                        "/api/profiles/beta/broadcast/recipients", headers=headers,
+                        json={"chat_ids": [202]},
+                    )
+                    self.assertEqual(saved.status, 200)
+                    saved_data = await saved.json()
+                    self.assertEqual(saved_data["profile"], "beta")
+                    self.assertEqual(saved_data["account_id"], 2002)
+                    self.assertEqual(beta_cfg["broadcast_allowlist"], [202])
+                    self.assertEqual(alpha_cfg["broadcast_allowlist"], [])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_broadcast_start_reuses_recent_profile_dialog_validation(self):
+        async def run():
+            import time
+            with tempfile.TemporaryDirectory() as td:
+                class FakeBroadcaster:
+                    def __init__(self):
+                        self._dialogs_scanned_at = time.time()
+                        self.calls = []
+                        self.chats = [(301, "Current group")]
+                    async def chat_list(self, refresh=False):
+                        self.calls.append(bool(refresh))
+                        if refresh:
+                            self._dialogs_scanned_at = time.time()
+                        return list(self.chats)
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                bc = FakeBroadcaster()
+                result = await runtime._validated_broadcast_chats(bc)
+                self.assertEqual(result, [(301, "Current group")])
+                self.assertEqual(bc.calls, [False])
+
+                bc._dialogs_scanned_at = time.time() - 120
+                await runtime._validated_broadcast_chats(bc)
+                self.assertEqual(bc.calls, [False, True])
+        asyncio.run(run())
+
     def test_archive_compact_payload_skips_unrendered_fields(self):
         import sqlite3
 
