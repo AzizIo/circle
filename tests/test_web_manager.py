@@ -403,6 +403,23 @@ class WebManagerTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_archive_media_sort_index_is_created_and_used(self):
+        import combined_multi_account as app_module
+
+        with tempfile.TemporaryDirectory() as td:
+            db = app_module.DB(Path(td) / "circles.db")
+            try:
+                indexes = {row[1] for row in db.conn.execute("PRAGMA index_list(circles)")}
+                self.assertIn("idx_circles_user_date_msg", indexes)
+                plan = db.conn.execute(
+                    "EXPLAIN QUERY PLAN SELECT msg_id,date_utc FROM circles "
+                    "WHERE user_id=? ORDER BY date_utc DESC,msg_id DESC LIMIT ?",
+                    (123, 30),
+                ).fetchall()
+                self.assertTrue(any("idx_circles_user_date_msg" in str(row) for row in plan), plan)
+            finally:
+                db.close()
+
     def test_broadcast_log_api_parses_levels_and_filters(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
@@ -434,6 +451,16 @@ class WebManagerTests(unittest.TestCase):
                     self.assertEqual(data["counts"]["INFO"], 1)
                     self.assertEqual(data["counts"]["WARNING"], 1)
                     self.assertEqual(data["counts"]["ERROR"], 1)
+
+                    compact_response = await client.get(
+                        "/api/profiles/default/logs?kind=broadcast&level=ERROR&compact=1",
+                        headers=headers,
+                    )
+                    self.assertEqual(compact_response.status, 200)
+                    compact_data = await compact_response.json()
+                    self.assertNotIn("lines", compact_data)
+                    self.assertNotIn("raw", compact_data["entries"][0])
+                    self.assertEqual(compact_data["entries"][0]["message"], "failed to send")
                 finally:
                     await client.close()
                     await runtime.stop()
