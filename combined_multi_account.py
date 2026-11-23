@@ -388,6 +388,12 @@ def cfg_problems(cfg: dict) -> list[str]:
     return bad
 
 
+def account_cfg_problems(cfg: dict) -> list[str]:
+    """Validate Telegram connectivity; the archive destination is optional for broadcasts."""
+    return [problem for problem in cfg_problems(cfg)
+            if not problem.startswith("ID группы-форума")]
+
+
 def setup_logging(ddir: Path, console: bool = True) -> None:
     if log.handlers:
         return
@@ -3829,7 +3835,7 @@ class AccountManager:
         cfg = read_profile_config(path)
         # Starting a profile must not silently change the owner's broadcast policy.
         # The current saved allowlist/exclusions and auto-subscribe choice are respected.
-        problems = [p for p in cfg_problems(cfg) if p != "не задан ID группы-форума"]
+        problems = account_cfg_problems(cfg)
         if problems:
             self.statuses[name] = "Требуется настройка: " + "; ".join(problems)
             return False, "Не хватает настроек: " + "; ".join(problems)
@@ -7314,7 +7320,7 @@ def main():
     cfg = load_cfg()
     bad = cfg_problems(cfg)
     if cmd == "web":
-        bad = [problem for problem in bad if problem != "ID группы-форума должен быть в формате -100..."]
+        bad = account_cfg_problems(cfg)
     if bad:
         print("Настройки не заполнены (" + "; ".join(bad) + "). Запустите: python combined.py", file=sys.stderr)
         sys.exit(3)
