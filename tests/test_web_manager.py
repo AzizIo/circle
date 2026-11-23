@@ -479,6 +479,14 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+    def test_panel_persists_selected_profile_between_page_reloads(self):
+        import telegram_manager_web as web_module
+
+        self.assertIn('localStorage.getItem("circles_active_profile")', web_module.INDEX_HTML)
+        self.assertIn('localStorage.setItem("circles_active_profile",S.profile)', web_module.INDEX_HTML)
+        self.assertIn('id="bcAccountSource"', web_module.INDEX_HTML)
+        self.assertIn('id="bcStartFeedback"', web_module.INDEX_HTML)
+
     def test_broadcast_recipient_lists_are_isolated_by_profile(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
