@@ -494,6 +494,16 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('id="bcAccountSource"', web_module.INDEX_HTML)
         self.assertIn('id="bcStartFeedback"', web_module.INDEX_HTML)
 
+    def test_panel_closes_head_style_before_body(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertEqual(html.count("<style>"), 1)
+        self.assertEqual(html.count("</style>"), 1)
+        self.assertLess(html.index("</style>"), html.index("<body>"))
+        self.assertLess(html.index("<body>"), html.index('<div class="app">'))
+        self.assertIn("</body></html>", html)
+
     def test_panel_hides_saved_access_token_and_explains_timeout_context(self):
         import telegram_manager_web as web_module
 
