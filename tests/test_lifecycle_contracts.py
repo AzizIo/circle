@@ -45,3 +45,21 @@ def test_run_service_does_not_migrate_broadcast_policy_on_startup():
     assert "broadcast_allowlist_only\"] = False" not in body
     assert "broadcast_auto_subscribe\"] = True" not in body
     assert "save_cfg(cfg)" not in body
+
+def test_autosub_worker_is_campaign_scoped_and_queue_capture_is_durable():
+    init = _block(SOURCE, "        # Link capture is session-level", "    def _apply_delays")
+    assert "self._ensure_autosub_worker()" not in init
+    assert "self.running = True" in _block(SOURCE, "    def _launch(self):", "    def start(self")
+    launch = _block(SOURCE, "    def _launch(self):", "    def start(self")
+    assert "self._ensure_autosub_worker()" in launch
+    mention = _block(SOURCE, "    async def _on_mention(self, event):", "    async def close(self):")
+    assert "self.autosub_queue.enqueue_many(accepted, chat_id, message_id)" in mention
+    assert "if self.running and self.state.get(\"active\"):" in mention
+    stop = _block(SOURCE, "    def stop(self):", "    def suspend(self):")
+    assert "worker.cancel()" in stop
+
+
+def test_telegram_bot_is_not_started_by_web_managed_runtime():
+    body = _block(SOURCE, "    # Web panel is the only operator control plane.", "    if target_err:")
+    assert "await bot.start" not in body
+    assert "bot_token" not in body
