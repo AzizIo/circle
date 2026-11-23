@@ -274,3 +274,287 @@ def test_profile_login_disconnects_client_when_profile_config_cannot_be_saved():
         assert "work" not in manager.auth_flows
 
     asyncio.run(run())
+
+
+
+def test_broadcast_uncertain_delivery_is_not_completed_or_retried_blindly():
+    body = _block(
+        SOURCE,
+        "    async def send_wave(self, msg, chats, pending: dict | None = None) -> dict:",
+        "    def _record_wave(self, r, seconds, partial=False, partial_reason=\"\"):",
+    )
+    uncertain = body.index('if reason == "uncertain":')
+    definite_rejection = body.index("# Definite Telegram rejections", uncertain)
+    branch = body[uncertain:definite_rejection]
+    save = branch.index("self._save_pending_progress(pending, r, completed)")
+    abort = branch.index('self._fatal_reason = "uncertain_delivery"')
+    assert save < abort
+    assert "completed.add(chat_id)" not in branch
+    assert 'pending["uncertain_deliveries"] = unresolved[-100:]' in branch
+
+
+def test_broadcast_only_counts_confirmed_telegram_message_ids_as_success():
+    forward = _block(
+        SOURCE,
+        "    async def forward(self, msg, chat):",
+        "    @staticmethod\n    def _pending_result",
+    )
+    assert 'getattr(item, "id", None)' in forward
+    assert 'return False, "uncertain"' in forward
+    wave = _block(
+        SOURCE,
+        "    async def send_wave(self, msg, chats, pending: dict | None = None) -> dict:",
+        "    def _record_wave(self, r, seconds, partial=False, partial_reason=\"\"):",
+    )
+    assert 'r["ok"] += 1' in wave
+    assert 'r["errors"][reason] += 1' in wave
+
+
+
+def test_uncertain_delivery_stops_as_a_distinct_recoverable_reason():
+    body = _block(
+        SOURCE,
+        "                    if self._fatal:",
+        '                    partial = has_remaining',
+    )
+    assert 'elif self._fatal_reason == "uncertain_delivery":' in body
+    assert 'reason = "uncertain_delivery"' in body
+    uncertain_branch = body.split('elif self._fatal_reason == "uncertain_delivery":', 1)[1].split("else:", 1)[0]
+    assert 'st["last_error"] = "uncertain_delivery:' in uncertain_branch
+    assert 'await self.alert("account-restricted"' not in uncertain_branch
+    assert 'reason = "account_restricted"' not in uncertain_branch
+    assert '"uncertain_delivery"' in _block(
+        SOURCE,
+        "    def terminal_reason_message(reason: str) -> str:",
+        "    def summary(self) -> str:",
+    )
+
+
+def test_broadcaster_resume_is_blocked_until_uncertain_delivery_is_reviewed():
+    body = _block(SOURCE, "    def resume(self) -> bool:", "    def stop(self):")
+    assert 'pending.get("uncertain_deliveries", [])' in body
+    assert "if isinstance(unresolved, list) and unresolved:" in body
+    assert "self._launch()" in body
+
+
+def test_resolve_uncertain_delivery_requires_owner_decision_and_updates_checkpoint():
+    from types import MethodType
+    import combined_multi_account as core
+
+    bc = object.__new__(core.Broadcaster)
+    pending = {
+        "chat_ids": [101, 202],
+        "completed_ids": [101],
+        "ok": 1,
+        "fail": 1,
+        "errors": {"uncertain": 1},
+        "failed": [("Test group", "uncertain")],
+        "uncertain_deliveries": [{"chat_id": 202, "title": "Test group", "detected_at": 1}],
+    }
+    bc.state = {"active": True, "end": 9999999999, "pending_wave": pending, "last_error": "uncertain"}
+    saved = []
+    def save_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+        saved.append(True)
+    bc._save_pending_progress = MethodType(save_progress, bc)
+
+    result = bc.resolve_uncertain_delivery(202, "delivered")
+    assert result["action"] == "delivered"
+    assert result["remaining_uncertain"] == 0
+    assert pending["completed_ids"] == [101, 202]
+    assert pending["ok"] == 2
+    assert pending["fail"] == 0
+    assert pending["errors"] == {}
+    assert pending["uncertain_deliveries"] == []
+    assert bc.state["last_error"] == ""
+    assert bc.state["next"] == 0
+    assert saved
+
+    retry_bc = object.__new__(core.Broadcaster)
+    retry_pending = {
+        "chat_ids": [303],
+        "completed_ids": [],
+        "ok": 0,
+        "fail": 1,
+        "errors": {"uncertain": 1},
+        "failed": [("Retry group", "uncertain")],
+        "uncertain_deliveries": [{"chat_id": 303, "title": "Retry group", "detected_at": 1}],
+    }
+    retry_bc.state = {"active": True, "end": 9999999999, "pending_wave": retry_pending,
+                      "last_error": "uncertain_delivery"}
+    def save_retry_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+    retry_bc._save_pending_progress = MethodType(save_retry_progress, retry_bc)
+    retry_result = retry_bc.resolve_uncertain_delivery(303, "retry")
+    assert retry_result["action"] == "retry"
+    assert retry_result["remaining_uncertain"] == 0
+    assert retry_pending["completed_ids"] == []
+    assert retry_pending["ok"] == 0
+    assert retry_pending["fail"] == 0
+    assert retry_pending["errors"] == {}
+    assert retry_bc.state["last_error"] == ""
+
+    try:
+        bc.resolve_uncertain_delivery(202, "retry")
+    except ValueError as exc:
+        assert "нет отправки" in str(exc).lower()
+    else:
+        raise AssertionError("A resolved destination must not be resolvable twice")
+
+
+def test_web_broadcast_status_exposes_uncertain_destinations_and_gates_resume():
+    source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
+    body = _block(source, "    def _broadcast_view(", "    async def dashboard(")
+    assert '"uncertain_deliveries": uncertain_deliveries' in body
+    assert "not uncertain_deliveries" in body
+    start = _block(source, "    async def start_broadcast(", "    async def resolve_broadcast_uncertain(")
+    assert 'pending.get("uncertain_deliveries", [])' in start
+
+
+def test_broadcast_panel_has_explicit_uncertain_delivery_review_controls():
+    html = (ROOT / "telegram_manager_panel.html").read_text(encoding="utf-8")
+    assert 'id="bcUncertainPanel"' in html
+    assert 'data-uncertain-action="delivered"' in html
+    assert 'data-uncertain-action="retry"' in html
+    assert 'url("/broadcast/uncertain")' in html
+
+
+def test_web_broadcast_status_treats_finalizing_task_as_busy():
+    source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
+    body = _block(source, "    def _broadcast_view(", "    async def dashboard(")
+    assert 'task = getattr(bc, "task", None)' in body
+    assert 'task is not None and not task.done()' in body
+    assert '"running": worker_busy' in body
+    start = _block(source, "    async def start_broadcast(", "    async def resolve_broadcast_uncertain(")
+    assert 'task is not None and not task.done()' in start
+    review = _block(source, "    async def resolve_broadcast_uncertain(", "    async def stop_broadcast(")
+    assert 'task is not None and not task.done()' in review
+
+
+def test_broadcaster_core_blocks_restart_until_previous_task_is_done():
+    from types import SimpleNamespace
+    import combined_multi_account as core
+
+    bc = object.__new__(core.Broadcaster)
+    bc.running = False
+    bc.task = SimpleNamespace(done=lambda: False)
+    bc.state = {"active": True, "end": 9999999999, "pending_wave": None}
+    launched = []
+    bc._launch = lambda: launched.append(True)
+    assert bc.resume() is False
+    assert bc.start(60, 12) is False
+    assert launched == []
+
+
+def test_forward_counts_only_telegram_message_id_as_confirmed_delivery():
+    import asyncio
+    from types import SimpleNamespace
+    import combined_multi_account as core
+
+    class FakeClient:
+        def __init__(self, result):
+            self.result = result
+        async def forward_messages(self, *args, **kwargs):
+            if isinstance(self.result, Exception):
+                raise self.result
+            return self.result
+
+    chat = SimpleNamespace(id=123, title="Test group")
+    source = SimpleNamespace(id=456)
+    bc = object.__new__(core.Broadcaster)
+    bc._consec_spam = 0
+    bc.client = FakeClient(SimpleNamespace(id=789))
+    assert asyncio.run(bc.forward(source, chat)) == (True, "")
+
+    bc.client = FakeClient(None)
+    assert asyncio.run(bc.forward(source, chat)) == (False, "uncertain")
+
+    bc.client = FakeClient(TimeoutError("acknowledgement lost"))
+    assert asyncio.run(bc.forward(source, chat)) == (False, "uncertain")
+
+
+def test_send_wave_checkpoints_ambiguous_chat_without_marking_it_completed():
+    import asyncio
+    from collections import Counter
+    from types import MethodType, SimpleNamespace
+    import time
+    import combined_multi_account as core
+
+    class FakeSkip:
+        def blocked_until(self, chat_id):
+            return None
+        def report(self):
+            return "no blocked chats"
+
+    class FakeNotifier:
+        def __init__(self):
+            self.alerts = []
+        async def alert(self, *args):
+            self.alerts.append(args)
+
+    bc = object.__new__(core.Broadcaster)
+    pending = {
+        "chat_ids": [123],
+        "completed_ids": [],
+        "ok": 0,
+        "fail": 0,
+        "errors": {},
+        "failed": [],
+        "skipped": 0,
+    }
+    bc.state = {"end": time.time() + 600, "pending_wave": pending}
+    bc.cfg = {}
+    bc.stop_event = asyncio.Event()
+    bc.banned = set()
+    bc.skip = FakeSkip()
+    bc._slow_until = {}
+    bc.progress = (0, 0)
+    bc._abort = False
+    bc._fatal = False
+    bc._fatal_reason = ""
+    bc._flood_wait = 0
+    bc._consec_spam = 0
+    bc.notifier = FakeNotifier()
+    bc._apply_delays = lambda: None
+
+    async def fail_uncertain(_msg, _chat):
+        return False, "uncertain"
+
+    async def no_sleep(_seconds):
+        return False
+
+    def save_progress(self, current, result, completed):
+        current["completed_ids"] = sorted(completed)
+        current["ok"] = result["ok"]
+        current["fail"] = result["fail"]
+        current["errors"] = dict(result["errors"])
+        current["failed"] = result["failed"]
+        self.state["pending_wave"] = current
+
+    bc.forward = fail_uncertain
+    bc._sleep = no_sleep
+    bc._save_pending_progress = MethodType(save_progress, bc)
+    result = asyncio.run(bc.send_wave(
+        SimpleNamespace(id=456),
+        [SimpleNamespace(id=123, title="Test group")],
+        pending=pending,
+    ))
+
+    assert result["ok"] == 0
+    assert result["fail"] == 1
+    assert result["errors"] == Counter({"uncertain": 1})
+    assert pending["completed_ids"] == []
+    assert pending["uncertain_deliveries"][0]["chat_id"] == 123
+    assert bc._fatal is True
+    assert bc._fatal_reason == "uncertain_delivery"
+    assert bc.notifier.alerts

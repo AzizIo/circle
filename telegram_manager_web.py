@@ -288,6 +288,7 @@ class TelegramManagerRuntime:
         app.router.add_post("/api/profiles/{name}/broadcast/recipients", self.set_recipients)
         app.router.add_get("/api/profiles/{name}/broadcast/recipients", self.recipients)
         app.router.add_post("/api/profiles/{name}/broadcast/start", self.start_broadcast)
+        app.router.add_post("/api/profiles/{name}/broadcast/uncertain", self.resolve_broadcast_uncertain)
         app.router.add_post("/api/profiles/{name}/broadcast/stop", self.stop_broadcast)
         app.router.add_post("/api/profiles/{name}/scan", self.start_scan)
         app.router.add_get("/api/scans/{scan_id}", self.scan_status)
@@ -589,6 +590,22 @@ class TelegramManagerRuntime:
                 continue
         total = len(pending_ids)
         completed = len(completed_ids.intersection(pending_ids))
+        raw_uncertain = pending.get("uncertain_deliveries", [])
+        uncertain_deliveries = []
+        if isinstance(raw_uncertain, list):
+            for item in raw_uncertain:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    chat_id = int(item.get("chat_id") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    continue
+                if chat_id and chat_id in pending_ids:
+                    uncertain_deliveries.append({
+                        "chat_id": chat_id,
+                        "title": str(item.get("title") or chat_id)[:160],
+                        "detected_at": float(item.get("detected_at") or 0),
+                    })
         profile_cfg = self.configs[name]
         current_allowlist = set()
         for raw in profile_cfg.get("broadcast_allowlist") or []:
@@ -599,12 +616,15 @@ class TelegramManagerRuntime:
         pending_not_selected = pending_ids.difference(current_allowlist)
         remaining_not_selected = pending_ids.difference(completed_ids).difference(current_allowlist)
         progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
+        task = getattr(bc, "task", None)
+        worker_busy = bool(getattr(bc, "running", False) or (task is not None and not task.done()))
         has_pending_wave = isinstance(state.get("pending_wave"), dict)
         try:
             ends_at = float(state.get("end") or 0)
         except (TypeError, ValueError, OverflowError):
             ends_at = 0.0
-        resume_available = bool(has_pending_wave and state.get("active") is True
+        resume_available = bool(has_pending_wave and not uncertain_deliveries and not worker_busy
+                                and state.get("active") is True
                                 and math.isfinite(ends_at) and ends_at > time.time())
         return {
             "profile": name,
@@ -614,9 +634,12 @@ class TelegramManagerRuntime:
             "pending_not_selected": len(pending_not_selected),
             "pending_remaining_not_selected": len(remaining_not_selected),
             "pending_completed_not_selected": len(pending_not_selected.intersection(completed_ids)),
-            "running": bool(bc.running), "status": bc.short(),
+            "running": worker_busy,
+            "status": ("⏳ завершается" if worker_busy and not getattr(bc, "running", False) else bc.short()),
             "active": bool(state.get("active")), "end": state.get("end", 0),
             "has_pending_wave": has_pending_wave, "resume_available": resume_available,
+            "uncertain_deliveries": uncertain_deliveries,
+            "uncertain_delivery_count": len(uncertain_deliveries),
             "ends_at": ends_at,
             "next": state.get("next", 0), "interval": state.get("interval", 0),
             "wave": state.get("wave", 0), "run_ok": state.get("run_ok", 0),
@@ -1310,8 +1333,9 @@ class TelegramManagerRuntime:
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
         cfg = self.configs[name]
-        if bc.running:
-            raise web.HTTPConflict(text="Кампания уже выполняется для этого аккаунта")
+        task = getattr(bc, "task", None)
+        if bc.running or (task is not None and not task.done()):
+            raise web.HTTPConflict(text="Кампания уже выполняется или сохраняет результат. Повтори после завершения операции.")
         try:
             payload = await request.json()
             if not isinstance(payload, dict) or payload.get("confirmed") is not True:
@@ -1323,6 +1347,12 @@ class TelegramManagerRuntime:
             state = getattr(bc, "state", {})
             pending = state.get("pending_wave") if isinstance(state, dict) else None
             if isinstance(pending, dict):
+                unresolved = pending.get("uncertain_deliveries", [])
+                if isinstance(unresolved, list) and unresolved:
+                    raise ValueError(
+                        "Есть отправки с неподтверждённым результатом. Сначала проверь каждый чат "
+                        "в блоке «Нужна проверка отправки»."
+                    )
                 if payload.get("resume_saved") is not True:
                     raise ValueError(
                         "Есть незавершённая сохранённая волна. Обнови панель и выбери "
@@ -1432,6 +1462,23 @@ class TelegramManagerRuntime:
                 "ok": True, "message": "Кампания запущена",
                 "selected_count": len(selected_ids), "selected_ids": selected_ids,
             }, status=202)
+        except (ValueError, TypeError, OSError) as exc:
+            raise web.HTTPBadRequest(text=str(exc))
+
+    async def resolve_broadcast_uncertain(self, request):
+        name = request.match_info["name"]
+        bc = self._get_broadcaster(name)
+        task = getattr(bc, "task", None)
+        if bc.running or (task is not None and not task.done()):
+            raise web.HTTPConflict(text="Кампания ещё завершает остановку. Проверка отправки станет доступна через несколько секунд.")
+        try:
+            payload = await request.json()
+            if not isinstance(payload, dict):
+                raise ValueError("Ожидается объект с chat_id и action")
+            chat_id = payload.get("chat_id")
+            action = str(payload.get("action") or "")
+            result = bc.resolve_uncertain_delivery(chat_id, action)
+            return web.json_response({"ok": True, **result})
         except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
 

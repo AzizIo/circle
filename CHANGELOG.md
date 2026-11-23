@@ -1,3 +1,13 @@
+## 3.9.26 — Broadcast Delivery Confirmation & Recovery
+
+- Count a broadcast as successful only after Telegram returns a created message with an ID.
+- Log the destination chat ID, source message ID and Telegram-created message ID for each confirmed forward.
+- Preserve ambiguous network outcomes separately from definite Telegram rejections; never report them as successful or replay them automatically.
+- Stop and checkpoint a wave when an acknowledgement is lost, including across VPS restarts.
+- Add an explicit owner review in the web panel: mark as delivered after checking the chat, or authorize a retry only after confirming the message is absent.
+- Prevent review and campaign-resume races while the broadcast worker is still finalizing.
+- Add regression coverage for checkpoint, owner decision, restart gate and panel feedback.
+
 ## 3.9.25 — Account Login and Profile Validation Hardening
 
 - Validate the primary Telegram API ID / API Hash before creating an additional profile, so an unusable profile is not created from an unconfigured base setup.
