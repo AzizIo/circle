@@ -3715,12 +3715,18 @@ class AccountManager:
         return [name for name, _ in account_profiles() if name != "default"]
 
     @staticmethod
+    def _profile_config_path(name: str) -> Path:
+        if name == "default":
+            return DEFAULT_CONFIG_PATH
+        return profile_config_path(name)
+
+    @staticmethod
     def _session_path(cfg: dict, ddir: Path) -> Path:
         return ddir / (str(cfg.get("session_name") or "circles") + ".session")
 
     def has_session(self, name: str) -> bool:
         try:
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             return self._session_path(cfg, data_dir(cfg)).exists()
         except (OSError, ValueError, FileNotFoundError):
             return False
@@ -3730,10 +3736,8 @@ class AccountManager:
         return bool(task and not task.done())
 
     def status(self, name: str) -> str:
-        if name == "default":
-            return "Главный аккаунт · панель управления активна"
         if self.is_running(name):
-            return "Работает"
+            return "Работает · основной аккаунт" if name == "default" else "Работает"
         if name in self.auth_flows:
             flow = self.auth_flows[name]
             if time.monotonic() > flow.get("expires", 0):
@@ -3788,10 +3792,8 @@ class AccountManager:
         return started
 
     async def start_profile(self, name: str) -> tuple[bool, str]:
-        if name == "default":
-            return False, "Главный аккаунт уже работает вместе с панелью управления."
         try:
-            path = profile_config_path(name)
+            path = self._profile_config_path(name)
         except ValueError as e:
             return False, str(e)
         if not path.is_file():
@@ -3839,6 +3841,7 @@ class AccountManager:
 
             code = await run_service(cfg, ddir, allow_broadcast=True,
                                      handle_signals=False, enable_account_manager=False,
+                                     allow_broadcast_autostart=False,
                                      on_broadcaster_ready=register_broadcaster,
                                      on_archiver_ready=register_archiver)
             if code == 2:
@@ -3866,8 +3869,6 @@ class AccountManager:
             ACTIVE_PROFILE.reset(profile_token)
 
     async def stop_profile(self, name: str) -> tuple[bool, str]:
-        if name == "default":
-            return False, "Главный аккаунт нельзя остановить отдельно: на нём работает бот-панель."
         task = self.tasks.get(name)
         if not task or task.done():
             return False, "Аккаунт уже остановлен."
@@ -3925,7 +3926,7 @@ class AccountManager:
             return "error", "Сначала останови этот профиль, затем начинай авторизацию."
         await self._discard_auth(name)
         try:
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             ddir = data_dir(cfg)
             problems = [p for p in cfg_problems(cfg) if p != "не задан ID группы-форума"]
             if problems:
@@ -6400,7 +6401,8 @@ async def _dead_session_notice(cfg, ddir, text):
 
 
 async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle_signals=True,
-                      restart_args=None, enable_account_manager=True, on_broadcaster_ready=None,
+                      restart_args=None, enable_account_manager=True, allow_broadcast_autostart=True,
+                      on_broadcaster_ready=None,
                       on_archiver_ready=None) -> int:
     """Run one Telegram account with its own archiver and optional broadcaster."""
     # Startup must not silently rewrite recipient restrictions or auto-subscribe policy.
@@ -6457,7 +6459,9 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
     # Web panel is the only operator control plane. Do not start a Telegram bot
     # process even when legacy bot_token remains in config.json.
     bot = None
-    account_manager = None
+    account_manager = AccountManager(me.id) if enable_account_manager and manager_profile_name == "default" else None
+    if account_manager is not None and WEB_MANAGER_RUNTIME is not None:
+        WEB_MANAGER_RUNTIME.set_account_manager(account_manager)
 
     if target_err:
         await notifier.alert("target", f"⚠️ Архиватор медиа не работает: {target_err}\n"
@@ -6479,7 +6483,7 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
         # to send automatically. Resume only when the explicit autostart flag is on.
         # An explicit --broadcast request still starts a campaign.
         resumed = False
-        autostart_enabled = bool(cfg.get("broadcast_autostart", False))
+        autostart_enabled = bool(allow_broadcast_autostart and cfg.get("broadcast_autostart", False))
         if autostart_enabled:
             resumed = bc.resume()
         elif bc.state.get("active") and float(bc.state.get("end") or 0) > time.time():
@@ -6545,7 +6549,7 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
         await bc.close()
         if account_manager:
             await account_manager.stop_all()
-        if WEB_MANAGER_RUNTIME is not None:
+        if account_manager is not None and WEB_MANAGER_RUNTIME is not None:
             WEB_MANAGER_RUNTIME.set_account_manager(None)
         if web_manager_started and WEB_MANAGER_RUNTIME is not None:
             await WEB_MANAGER_RUNTIME.stop()
@@ -6560,6 +6564,37 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             WEB_MANAGER_RUNTIME.unregister_profile(manager_profile_name)
     log.info("Остановлено")
     return code
+
+
+async def run_web_manager_host(cfg: dict) -> int:
+    """Run the web control plane without holding any Telegram account session."""
+    if WEB_MANAGER_RUNTIME is None:
+        raise RuntimeError("Web Manager недоступен: проверь зависимости веб-панели")
+    manager = AccountManager(int(cfg.get("owner_id") or 0))
+    WEB_MANAGER_RUNTIME.set_account_manager(manager)
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    installed_signals = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+            installed_signals.append(sig)
+        except (NotImplementedError, RuntimeError):
+            pass
+    try:
+        await WEB_MANAGER_RUNTIME.start()
+        log.info("Веб-панель запущена. Telegram-аккаунты ожидают команду из панели.")
+        await stop_event.wait()
+        return 0
+    finally:
+        await manager.stop_all()
+        await WEB_MANAGER_RUNTIME.stop()
+        WEB_MANAGER_RUNTIME.set_account_manager(None)
+        for sig in installed_signals:
+            try:
+                loop.remove_signal_handler(sig)
+            except Exception:
+                pass
 
 
 async def run_all_accounts(items: list[tuple[str, dict, Path]]) -> int:
@@ -7257,6 +7292,8 @@ def main():
     if args.all_accounts and args.broadcast:
         ap.error("Массовая рассылка запрещена в режиме --all-accounts. Запускайте один профиль отдельно.")
 
+    if args.profile and cmd == "web":
+        ap.error("--profile нельзя использовать с командой web")
     if args.profile:
         try:
             CONFIG_PATH = profile_config_path(args.profile)
@@ -7277,18 +7314,27 @@ def main():
 
     cfg = load_cfg()
     bad = cfg_problems(cfg)
+    if cmd == "web":
+        bad = [problem for problem in bad if problem != "ID группы-форума должен быть в формате -100..."]
     if bad:
         print("Настройки не заполнены (" + "; ".join(bad) + "). Запустите: python combined.py", file=sys.stderr)
         sys.exit(3)
     ddir = data_dir(cfg)
     setup_logging(ddir)
-    lk = acquire_lock(ddir)
+    if cmd == "web":
+        runtime_lock_dir = BASE / "manager_data"
+        runtime_lock_dir.mkdir(parents=True, exist_ok=True)
+        lk = acquire_lock(runtime_lock_dir)
+    else:
+        lk = acquire_lock(ddir)
     if lk is None:
         log.error("Другая копия уже работает с этой сессией.")
         sys.exit(4)
 
     try:
-        if cmd == "run":
+        if cmd == "web":
+            sys.exit(asyncio.run(run_web_manager_host(cfg)))
+        elif cmd == "run":
             bcast = ((args.interval or cfg["broadcast_interval_min"], args.hours or cfg["broadcast_hours"])
                      if args.broadcast else None)
             restart_args = ["run"] + (["--profile", args.profile] if args.profile else [])
