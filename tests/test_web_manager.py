@@ -403,6 +403,40 @@ class WebManagerTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_archive_summary_query_runs_in_worker_thread(self):
+        async def run():
+            import threading
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, Path(td))
+                runtime._archive_summary_sync = lambda _name: {
+                    "thread_name": threading.current_thread().name,
+                }
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get(
+                    "/api/profiles/{name}/archive/summary", runtime.archive_summary,
+                )
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    response = await client.get(
+                        "/api/profiles/default/archive/summary",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertNotEqual(data["thread_name"], "MainThread")
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
     def test_archive_media_sort_index_is_created_and_used(self):
         import combined_multi_account as app_module
 
