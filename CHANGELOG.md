@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.20 — Campaign Button State
+
+- Disable the launch button while the selected campaign is actively running; show its actual running state instead of allowing a duplicate start request.
+- Show “Продолжить” when a persisted campaign is active but its worker is not running and needs recovery.
+- Return HTTP 409 with an explicit message if a second start request reaches the server while a campaign is already running.
+- Added regression tests for duplicate start requests and state-aware launch button behavior.
+
+
 ## 3.9.19 — Async UI Race Protection
 
 - Queue the latest log refresh when filters change during an in-flight request; the final filter selection is loaded automatically instead of being lost.
