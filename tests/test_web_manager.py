@@ -61,11 +61,106 @@ class WebManagerTests(unittest.TestCase):
                     self.assertEqual(invalid.status, 400)
                     conflict = await client.post("/api/accounts", headers=headers, json={"name": "taken"})
                     self.assertEqual(conflict.status, 409)
-                    non_object = await client.post("/api/accounts", headers=headers, data="[]",
-                                                   headers2=None) if False else None
                 finally:
                     await client.close()
                     await runtime.stop()
+        asyncio.run(run())
+
+    def test_real_add_profile_and_code_login_keep_session_and_config_isolated(self):
+        async def run():
+            import json
+            from types import SimpleNamespace
+            import combined_multi_account as core
+
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                config_path = root / "config.json"
+                original_cfg = {
+                    **core.DEFAULTS,
+                    "api_id": 12345,
+                    "api_hash": "test-api-hash",
+                    "data_dir": "data",
+                    "session_name": "main-session",
+                    "target_chat_id": -1001234567890,
+                    "owner_id": 111,
+                    "account_label": "Main account",
+                }
+                config_path.write_text(json.dumps(original_cfg), encoding="utf-8")
+                previous = (core.BASE, core.CONFIG_PATH, core.DEFAULT_CONFIG_PATH, core.ACCOUNTS_DIR)
+                old_make_client = core.make_client
+                try:
+                    core.BASE = root
+                    core.CONFIG_PATH = config_path
+                    core.DEFAULT_CONFIG_PATH = config_path
+                    core.ACCOUNTS_DIR = root / "accounts"
+
+                    created_path = core.add_account_profile("work")
+                    profile_cfg = json.loads(created_path.read_text(encoding="utf-8"))
+                    self.assertEqual(profile_cfg["owner_id"], 0)
+                    self.assertEqual(profile_cfg["api_id"], 12345)
+                    self.assertEqual(profile_cfg["api_hash"], "test-api-hash")
+                    self.assertEqual(profile_cfg["data_dir"], "accounts/work/data")
+                    self.assertEqual(profile_cfg["session_name"], "circles")
+                    self.assertEqual(profile_cfg["broadcast_allowlist"], [])
+                    self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["owner_id"], 111)
+
+                    class FakeClient:
+                        def __init__(self):
+                            self.connected = False
+                            self.authorized = False
+                            self.disconnected = False
+                        async def connect(self):
+                            self.connected = True
+                        async def is_user_authorized(self):
+                            return self.authorized
+                        async def send_code_request(self, phone):
+                            self.phone = phone
+                            return SimpleNamespace(phone_code_hash="fake-hash")
+                        async def sign_in(self, **kwargs):
+                            self.authorized = True
+                        async def get_me(self):
+                            return SimpleNamespace(
+                                id=222, first_name="Work", last_name="Account",
+                                username="work_account", deleted=False,
+                            )
+                        def is_connected(self):
+                            return self.connected
+                        async def disconnect(self):
+                            self.connected = False
+                            self.disconnected = True
+
+                    fake = FakeClient()
+                    core.make_client = lambda cfg, ddir: fake
+                    manager = core.AccountManager(owner_id=111)
+                    async def start_profile(name):
+                        self.assertEqual(name, "work")
+                        return True, "Профиль запускается"
+                    manager.start_profile = start_profile
+
+                    stage, message = await manager.begin_login("work", "+79990000000")
+                    self.assertEqual(stage, "code")
+                    self.assertIn("Код отправлен", message)
+                    self.assertIn("work", manager.auth_flows)
+                    self.assertEqual(fake.phone, "+79990000000")
+
+                    stage, message = await manager.submit_code("work", "12345")
+                    self.assertEqual(stage, "done")
+                    self.assertIn("Аккаунт авторизован", message)
+                    saved_profile = json.loads(created_path.read_text(encoding="utf-8"))
+                    saved_primary = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertEqual(saved_profile["owner_id"], 222)
+                    self.assertIn("Work Account", saved_profile["account_label"])
+                    self.assertEqual(saved_primary["owner_id"], 111)
+                    self.assertEqual(saved_primary["account_label"], "Main account")
+                    self.assertTrue(fake.disconnected)
+                    self.assertNotIn("work", manager.auth_flows)
+                finally:
+                    await asyncio.gather(
+                        *(m._discard_auth(n) for n,m in []),
+                        return_exceptions=True,
+                    )
+                    core.make_client = old_make_client
+                    core.BASE, core.CONFIG_PATH, core.DEFAULT_CONFIG_PATH, core.ACCOUNTS_DIR = previous
         asyncio.run(run())
 
     def test_login_routes_cover_code_2fa_done_and_invalid_payloads(self):
