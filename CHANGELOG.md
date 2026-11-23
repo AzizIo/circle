@@ -1,5 +1,14 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.12 — Safer Session UI & Broadcast Validation
+
+- Stop echoing the stored access token into the password field after login; show an access-ready state and expose the field only when the user chooses to change the key.
+- Restructured the top bar for desktop, tablet, and mobile widths so account controls wrap without colliding with the page title.
+- Avoid re-saving an unchanged recipient list during launch and reuse the fresh Telegram dialog snapshot for the server-side final validation instead of forcing a second full scan.
+- Gave Telegram dialog validation requests a longer, explicit timeout and report the method/path; a timeout is no longer presented as proof that launch failed.
+- Added regression tests for redundant dialog scans, token-field privacy, and contextual timeout feedback.
+
+
 ## 3.9.11 — Archive Loading & Selection Feedback
 
 - Added persistent loading, success, and error feedback to archive catalogue and person-media navigation, with pagination controls disabled while requests are active.
