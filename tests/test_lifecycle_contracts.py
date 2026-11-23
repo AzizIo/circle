@@ -57,6 +57,11 @@ def test_autosub_worker_is_campaign_scoped_and_queue_capture_is_durable():
     assert "if self.running and self.state.get(\"active\"):" in mention
     stop = _block(SOURCE, "    def stop(self):", "    def suspend(self):")
     assert "worker.cancel()" in stop
+    suspend = _block(SOURCE, "    def suspend(self):", "    def set_interval(self")
+    assert "worker.cancel()" in suspend
+    finally_block = _block(SOURCE, "        finally:\n            await self.save_subs(force=True)", "    # ----- управление -----")
+    assert "worker.cancel()" in finally_block
+    assert "await asyncio.gather(worker, return_exceptions=True)" in finally_block
 
 
 def test_telegram_bot_is_not_started_by_web_managed_runtime():
