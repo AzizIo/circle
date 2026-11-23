@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.16"
+APP_VERSION = "3.9.17"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -1078,6 +1078,7 @@ class TelegramManagerRuntime:
             malformed_count = 1
 
         selected_ids = sorted(parsed_allowlist.intersection(live_ids))
+        selected_id_set = set(selected_ids)
         removed_stale_count = len(parsed_allowlist.difference(live_ids)) + malformed_count
         normalized_allowlist = selected_ids
         if raw_allowlist != normalized_allowlist:
@@ -1088,7 +1089,7 @@ class TelegramManagerRuntime:
         for cid, title in chats[offset:offset + limit]:
             cid = int(cid)
             items.append({"id": cid, "title": title, "status": bc.chat_status(cid),
-                          "selected": cid in set(selected_ids)})
+                          "selected": cid in selected_id_set})
         return web.json_response({
             "profile": name,
             "account_label": str(cfg.get("account_label") or name),
