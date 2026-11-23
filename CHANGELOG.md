@@ -1,5 +1,11 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.5 — Non-blocking Archive Queries
+
+- Moved archive summary, people catalog, and media-page SQLite reads into worker threads so large databases do not block the aiohttp event loop.
+- Added a regression test confirming archive summary work runs outside the main event-loop thread.
+
+
 ## 3.9.4 — Server & Archive Performance
 
 - Added a descending composite index for archive media pagination by user/date/message.
