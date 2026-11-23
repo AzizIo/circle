@@ -428,8 +428,11 @@ class TelegramManagerRuntime:
         if self.profiles_provider:
             try:
                 profiles = self.profiles_provider()
-            except Exception:
-                profiles = []
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Не удалось получить список Telegram-профилей")
+                raise web.HTTPServiceUnavailable(
+                    text=f"Не удалось прочитать список аккаунтов ({type(exc).__name__}). Проверь config.json и журнал сервера."
+                )
             for name, cfg, ddir in profiles:
                 connected = name in self.clients
                 running = False
@@ -484,7 +487,9 @@ class TelegramManagerRuntime:
             raise web.HTTPBadRequest(text=str(exc))
         except OSError as exc:
             log.exception("Не удалось создать профиль Telegram")
-            raise web.HTTPInternalServerError(text=f"Не удалось сохранить профиль: {type(exc).__name__}")
+            raise web.HTTPServiceUnavailable(
+                text=f"Не удалось записать профиль на диск ({type(exc).__name__}). Проверь права на папку accounts."
+            )
 
     @staticmethod
     async def _json_payload(request, *, expected: str) -> dict:

@@ -30,6 +30,97 @@ class WebManagerTests(unittest.TestCase):
                     await client.close()
         asyncio.run(run())
 
+    def test_real_add_profile_and_code_login_keep_session_and_config_isolated(self):
+        async def run():
+            import json
+            from types import SimpleNamespace
+            import combined_multi_account as core
+
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                config_path = root / "config.json"
+                original_cfg = {
+                    **core.DEFAULTS,
+                    "api_id": 12345, "api_hash": "test-api-hash",
+                    "data_dir": "data", "session_name": "main-session",
+                    "target_chat_id": -1001234567890,
+                    "owner_id": 111, "account_label": "Main account",
+                }
+                config_path.write_text(json.dumps(original_cfg), encoding="utf-8")
+                previous = (core.BASE, core.CONFIG_PATH, core.DEFAULT_CONFIG_PATH, core.ACCOUNTS_DIR)
+                old_make_client = core.make_client
+                try:
+                    core.BASE = root
+                    core.CONFIG_PATH = config_path
+                    core.DEFAULT_CONFIG_PATH = config_path
+                    core.ACCOUNTS_DIR = root / "accounts"
+                    created_path = core.add_account_profile("work", "Рабочий аккаунт")
+                    profile_cfg = json.loads(created_path.read_text(encoding="utf-8"))
+                    self.assertEqual(profile_cfg["owner_id"], 0)
+                    self.assertEqual(profile_cfg["api_id"], 12345)
+                    self.assertEqual(profile_cfg["data_dir"], "accounts/work/data")
+                    self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["owner_id"], 111)
+
+                    class FakeClient:
+                        def __init__(self):
+                            self.connected = False
+                            self.disconnected = False
+                        async def connect(self): self.connected = True
+                        async def is_user_authorized(self): return False
+                        async def send_code_request(self, phone):
+                            self.phone = phone
+                            return SimpleNamespace(phone_code_hash="test-hash")
+                        async def sign_in(self, **kwargs): return None
+                        async def get_me(self):
+                            return SimpleNamespace(id=222, first_name="Work", last_name="Account",
+                                                   username="work_account", deleted=False)
+                        def is_connected(self): return self.connected
+                        async def disconnect(self):
+                            self.connected = False
+                            self.disconnected = True
+
+                    fake = FakeClient()
+                    core.make_client = lambda cfg, ddir: fake
+                    manager = core.AccountManager(owner_id=111)
+                    async def start_profile(name):
+                        self.assertEqual(name, "work")
+                        return True, "Профиль запускается"
+                    manager.start_profile = start_profile
+
+                    stage, message = await manager.begin_login("work", "+79990000000")
+                    self.assertEqual(stage, "code")
+                    self.assertIn("Код отправлен", message)
+                    self.assertIn("work", manager.auth_flows)
+                    stage, message = await manager.submit_code("work", "12345")
+                    self.assertEqual(stage, "done")
+                    self.assertIn("Аккаунт авторизован", message)
+                    saved_profile = json.loads(created_path.read_text(encoding="utf-8"))
+                    saved_primary = json.loads(config_path.read_text(encoding="utf-8"))
+                    self.assertEqual(saved_profile["owner_id"], 222)
+                    self.assertIn("Work Account", saved_profile["account_label"])
+                    self.assertEqual(saved_primary["owner_id"], 111)
+                    self.assertEqual(saved_primary["account_label"], "Main account")
+                    self.assertTrue(fake.disconnected)
+                    self.assertNotIn("work", manager.auth_flows)
+                finally:
+                    core.make_client = old_make_client
+                    core.BASE, core.CONFIG_PATH, core.DEFAULT_CONFIG_PATH, core.ACCOUNTS_DIR = previous
+        asyncio.run(run())
+
+    def test_account_login_error_messages_are_actionable(self):
+        import combined_multi_account as core
+
+        def error(name, **attrs):
+            cls = type(name, (Exception,), {})
+            exc = cls("not-shown")
+            for key, value in attrs.items():
+                setattr(exc, key, value)
+            return exc
+
+        self.assertIn("код страны", core.AccountManager._auth_error_message(error("PhoneNumberInvalidError")))
+        self.assertIn("API ID / API Hash", core.AccountManager._auth_error_message(error("ApiIdInvalidError")))
+        self.assertIn("37 секунд", core.AccountManager._auth_error_message(error("FloodWaitError", seconds=37)))
+
     def test_profiles_and_account_start_stop_routes(self):
         async def run():
             with tempfile.TemporaryDirectory() as td:
@@ -161,6 +252,16 @@ class WebManagerTests(unittest.TestCase):
                     await client.close()
                     await runtime.stop()
         asyncio.run(run())
+
+    def test_account_login_ui_uses_longer_timeout_and_persists_auth_profile_after_reload(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('path.includes("/login/")', html)
+        self.assertIn('localStorage.getItem("circles_auth_profile")', html)
+        self.assertIn('localStorage.setItem("circles_auth_profile",auth.value)', html)
+        self.assertIn('$("authProfile").onchange=', html)
+        self.assertIn('if(d.stage==="done"){await loadProfiles();$("authProfile").value=name', html)
 
     def test_account_panel_exposes_authorize_action_and_preserves_selected_auth_profile(self):
         import telegram_manager_web as web_module
