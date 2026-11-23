@@ -439,3 +439,18 @@ def test_web_broadcast_status_treats_finalizing_task_as_busy():
     assert 'task is not None and not task.done()' in start
     review = _block(source, "    async def resolve_broadcast_uncertain(", "    async def stop_broadcast(")
     assert 'task is not None and not task.done()' in review
+
+
+def test_broadcaster_core_blocks_restart_until_previous_task_is_done():
+    from types import SimpleNamespace
+    import combined_multi_account as core
+
+    bc = object.__new__(core.Broadcaster)
+    bc.running = False
+    bc.task = SimpleNamespace(done=lambda: False)
+    bc.state = {"active": True, "end": 9999999999, "pending_wave": None}
+    launched = []
+    bc._launch = lambda: launched.append(True)
+    assert bc.resume() is False
+    assert bc.start(60, 12) is False
+    assert launched == []
