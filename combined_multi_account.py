@@ -1496,9 +1496,8 @@ class Broadcaster:
         self._consec_spam = 0
         self._scan_task = None         # идущее сейчас сканирование диалогов (чтобы не запускать два одновременно)
         self._apply_delays()
-        # Auto-subscription is a session-level background listener. It remains
-        # active during campaign pauses and when no broadcast campaign is running.
-        # The owner can toggle it live through cfg without reconnecting the client.
+        # Link capture is session-level, but queued actions are executed only while
+        # a broadcast campaign is active. The durable queue remains available offline.
         self._subscribe_tasks: set[asyncio.Task] = set()  # legacy batch tasks; retained for graceful migration
         self._autosub_worker_task: asyncio.Task | None = None
         self._autosub_wakeup = asyncio.Event()
@@ -2394,7 +2393,7 @@ class Broadcaster:
     async def subscribe(self, channels: list, _flood_retry: int = 0):
         """Compatibility entry point: persist actions and let the per-account worker process them."""
         inserted, duplicates = self.autosub_queue.enqueue_many(channels)
-        if inserted:
+        if inserted and self.running and self.state.get("active"):
             self._autosub_wakeup.set()
             self._ensure_autosub_worker()
         return {"inserted": inserted, "duplicates": duplicates}
@@ -2403,6 +2402,7 @@ class Broadcaster:
         if manual_resume:
             self.autosub_queue.clear_pause()
         if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
+                or not self.running or not self.state.get("active")
                 or self._autosub_worker_stopping):
             return None
         if self._autosub_worker_task is None or self._autosub_worker_task.done():
@@ -2414,7 +2414,8 @@ class Broadcaster:
     async def _autosub_worker_loop(self):
         """Drain the durable per-account queue; honor FloodWait and stop without losing jobs."""
         while not self._autosub_worker_stopping:
-            if not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True):
+            if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
+                    or not self.running or not self.state.get("active")):
                 return
             pause_until, pause_reason = self.autosub_queue.pause_info()
             now = time.time()
@@ -2807,8 +2808,9 @@ class Broadcaster:
             # Always ensure/wake the worker after a successful DB enqueue call.
             # This also recovers a worker that exited while the queue already
             # contained the same durable action.
-            self._ensure_autosub_worker()
-            self._autosub_wakeup.set()
+            if self.running and self.state.get("active"):
+                self._ensure_autosub_worker()
+                self._autosub_wakeup.set()
             if not is_new_event:
                 blog.debug("Повторное событие упоминания: SQLite-дедупликация сохранена")
         except Exception:  # noqa: BLE001
@@ -3457,6 +3459,14 @@ class Broadcaster:
         finally:
             await self.save_subs(force=True)
             self.running = False
+            # Stop link-action execution as soon as a campaign ends. Queue rows
+            # remain durable and are resumed only by the next explicit campaign.
+            self._autosub_wakeup.set()
+            worker = self._autosub_worker_task
+            if worker and not worker.done():
+                worker.cancel()
+                await asyncio.gather(worker, return_exceptions=True)
+            self._autosub_worker_task = None
             if not self.suspending:
                 terminal_detail = self.terminal_reason_message(reason)
                 if terminal_detail:
@@ -3484,7 +3494,9 @@ class Broadcaster:
         self.running = True
         self.suspending = False
         self.stop_event.clear()
-        self.task = asyncio.create_task(self._job())
+        self.task = asyncio.create_task(self._job(), name=f"broadcast:{self.ddir.name}")
+        if self.cfg.get("broadcast_auto_subscribe", True):
+            self._ensure_autosub_worker()
 
     def start(self, interval_min, hours) -> bool:
         if self.running:
@@ -3522,6 +3534,10 @@ class Broadcaster:
     def stop(self):
         self.suspending = False
         self.stop_event.set()
+        self._autosub_wakeup.set()
+        worker = self._autosub_worker_task
+        if worker and not worker.done():
+            worker.cancel()
 
     def suspend(self):
         """Остановить на время выключения сервиса: состояние сохраняется, после запуска продолжим."""
@@ -6425,58 +6441,19 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             log.exception("Ошибка обработки сообщения")
             await notifier.alert("handler", f"⚠️ Ошибка обработки медиа: {type(e).__name__}: {e}", 1800)
 
-    # Auto-subscription is independent of whether this profile exposes/starts a
-    # broadcast campaign. The live cfg switch controls the listener itself.
+    # The listener only records supported links to the durable queue. The worker
+    # that executes queued actions is started/stopped with the broadcast campaign.
     bc = Broadcaster(cfg, client, ddir, notifier, enabled=True)
     bc.load_files()
     if WEB_MANAGER_RUNTIME is not None:
-        WEB_MANAGER_RUNTIME.register_broadcaster(manager_profile_name, bc)
-    if cfg.get("broadcast_auto_subscribe", True):
-        bc._ensure_autosub_worker()
+        WEB_MANAGER_RUNTIME.register_broadcaster(manager_profile_name, bc) 
     if allow_broadcast and on_broadcaster_ready:
         on_broadcaster_ready(bc)
 
+    # Web panel is the only operator control plane. Do not start a Telegram bot
+    # process even when legacy bot_token remains in config.json.
     bot = None
     account_manager = None
-    is_primary_profile = Path(cfg.get("_config_path") or DEFAULT_CONFIG_PATH).resolve() == DEFAULT_CONFIG_PATH.resolve()
-    if cfg.get("bot_token"):
-        try:
-            bot = TelegramClient(str(ddir / "control_bot"), int(cfg["api_id"]), cfg["api_hash"],
-                                 connection_retries=-1, retry_delay=5, auto_reconnect=True)
-            await bot.start(bot_token=cfg["bot_token"])
-
-            async def restart_cb():
-                log.info("Перезапуск по команде из бота")
-                await bot.disconnect()
-                await client.disconnect()
-                command_args = restart_args if restart_args is not None else ["run"]
-                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *command_args])
-
-            if enable_account_manager and is_primary_profile:
-                account_manager = AccountManager(me.id)
-                try:
-                    autostarted = await account_manager.start_existing()
-                    if autostarted:
-                        log.info("Дополнительные аккаунты запущены: %s", ", ".join(autostarted))
-                except Exception:
-                    log.exception("Не удалось автоматически запустить некоторые аккаунты")
-                if WEB_MANAGER_RUNTIME is not None:
-                    WEB_MANAGER_RUNTIME.set_account_manager(account_manager)
-            panel = ControlBot(cfg, ddir, db, arch, bot, me.id, restart_cb, bc, notifier, client,
-                               allow_broadcast=allow_broadcast, account_manager=account_manager)
-            panel.register()
-
-            async def _send(text, buttons=None):
-                await bot.send_message(me.id, text, buttons=buttons)
-
-            notifier.send_fn = _send
-            if account_manager:
-                account_manager.set_notifier_send_fn(_send)
-            await panel.notify_started()
-            log.info("Бот-панель запущена (отвечает только владельцу, id %s)", me.id)
-        except Exception:  # noqa: BLE001
-            log.exception("Бот-панель не запущена - всё остальное продолжит работу без неё")
-            bot = None
 
     if target_err:
         await notifier.alert("target", f"⚠️ Архиватор медиа не работает: {target_err}\n"
