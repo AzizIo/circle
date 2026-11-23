@@ -71,6 +71,84 @@ class SmartCleanerTests(unittest.TestCase):
                     cleaner.close()
         asyncio.run(run())
 
+    def test_compact_catalog_omits_full_text_but_keeps_panel_fields(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                entity = Chat(id=81, title="Bitcoin crypto traders", username="btc_chat",
+                              creator=False, admin_rights=None, broadcast=False, samples=[])
+                dialog = SimpleNamespace(id=-81, entity=entity, name="Bitcoin crypto traders",
+                                          unread_count=2, date=None, archived=False)
+                cleaner = SmartCleaner(td)
+                try:
+                    await cleaner.scan(FakeClient([dialog]))
+                    full = cleaner.list_catalog()["items"][0]
+                    compact = cleaner.list_catalog(compact=True)["items"][0]
+                    self.assertIn("about", full)
+                    self.assertIn("sample_text", full)
+                    self.assertIn("scores", full)
+                    self.assertNotIn("about", compact)
+                    self.assertNotIn("sample_text", compact)
+                    self.assertNotIn("scores", compact)
+                    self.assertEqual(compact["chat_id"], -81)
+                    self.assertEqual(compact["title"], "Bitcoin crypto traders")
+                    self.assertEqual(compact["username"], "btc_chat")
+                    self.assertIn("protected", compact)
+                    self.assertIn("is_scam", compact)
+                finally:
+                    cleaner.close()
+        asyncio.run(run())
+
+    def test_scan_reuses_about_and_message_samples_for_unchanged_dialogs(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                entity = Chat(id=82, title="General discussion", username="general_chat",
+                              creator=False, admin_rights=None, broadcast=False,
+                              samples=["Bitcoin BTC wallet USDT"])
+                dialog = SimpleNamespace(id=-82, entity=entity, name="General discussion",
+                                          unread_count=0, date=None, archived=False)
+                client = FakeClient([dialog])
+                about_calls = 0
+
+                async def get_full_chat_about(_entity):
+                    nonlocal about_calls
+                    about_calls += 1
+                    return ""
+
+                client.get_full_chat_about = get_full_chat_about
+                cleaner = SmartCleaner(td)
+                try:
+                    await cleaner.scan(client)
+                    second = await cleaner.scan(client)
+                    self.assertEqual(about_calls, 1)
+                    self.assertEqual(client.message_calls, 1)
+                    self.assertGreaterEqual(second["cache_hits"], 2)
+                    self.assertEqual(cleaner.list_catalog()["items"][0]["category"], "crypto")
+                finally:
+                    cleaner.close()
+        asyncio.run(run())
+
+    def test_scan_progress_callback_reports_seen_and_saved_counts(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                dialogs = []
+                for chat_id in (91, 92):
+                    entity = Chat(id=chat_id, title=f"Crypto traders {chat_id}", username="",
+                                  creator=False, admin_rights=None, broadcast=False, samples=[])
+                    dialogs.append(SimpleNamespace(id=-chat_id, entity=entity,
+                                                    name=entity.title, unread_count=0,
+                                                    date=None, archived=False))
+                updates = []
+                cleaner = SmartCleaner(td)
+                try:
+                    result = await cleaner.scan(FakeClient(dialogs),
+                                                progress=lambda seen, saved: updates.append((seen, saved)))
+                    self.assertEqual(result["dialogs_seen"], 2)
+                    self.assertEqual(result["scanned"], 2)
+                    self.assertEqual(updates[-1], (2, 2))
+                finally:
+                    cleaner.close()
+        asyncio.run(run())
+
     def test_combined_classifier_uses_title_and_messages(self):
         category, confidence, scores = classify_combined('Обсуждение', '', '', ['Bitcoin BTC кошелёк USDT'])
         self.assertEqual(category, 'crypto')
