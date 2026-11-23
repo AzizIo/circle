@@ -35,6 +35,40 @@ class FakeClient:
 
 
 class SmartCleanerTests(unittest.TestCase):
+    def test_catalog_query_indexes_and_worker_thread_read_connection(self):
+        async def run():
+            import threading
+            with tempfile.TemporaryDirectory() as td:
+                cleaner = SmartCleaner(td)
+                try:
+                    names = {row[1] for row in cleaner.db.execute("PRAGMA index_list(catalog)")}
+                    self.assertIn("idx_catalog_sort", names)
+                    self.assertIn("idx_catalog_peer_sort", names)
+                    self.assertIn("idx_catalog_category_sort", names)
+                    self.assertIn("idx_catalog_category_peer_sort", names)
+
+                    sort_plan = cleaner.db.execute(
+                        "EXPLAIN QUERY PLAN SELECT * FROM catalog "
+                        "ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE "
+                        "LIMIT ? OFFSET ?", (100, 0),
+                    ).fetchall()
+                    filtered_plan = cleaner.db.execute(
+                        "EXPLAIN QUERY PLAN SELECT * FROM catalog "
+                        "WHERE category=? AND peer_type=? "
+                        "ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE "
+                        "LIMIT ? OFFSET ?", ("crypto", "group", 100, 0),
+                    ).fetchall()
+                    self.assertIn("idx_catalog_sort", " ".join(map(str, sort_plan)))
+                    self.assertIn("idx_catalog_category_peer_sort", " ".join(map(str, filtered_plan)))
+
+                    result = await asyncio.to_thread(cleaner.list_catalog, category="crypto", peer_type="group")
+                    self.assertEqual(result, {"total": 0, "items": []})
+                    stats = await asyncio.to_thread(cleaner.catalog_stats)
+                    self.assertEqual(stats["total"], 0)
+                finally:
+                    cleaner.close()
+        asyncio.run(run())
+
     def test_combined_classifier_uses_title_and_messages(self):
         category, confidence, scores = classify_combined('Обсуждение', '', '', ['Bitcoin BTC кошелёк USDT'])
         self.assertEqual(category, 'crypto')
