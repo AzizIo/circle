@@ -437,6 +437,48 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+    def test_smart_cleaner_catalog_reads_run_in_worker_threads(self):
+        async def run():
+            import threading
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, Path(td))
+                runtime.cleaners["default"].catalog_stats = lambda: {
+                    "thread_name": threading.current_thread().name,
+                }
+                runtime.cleaners["default"].list_catalog = lambda **_kwargs: {
+                    "thread_name": threading.current_thread().name, "total": 0, "items": [],
+                }
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/summary", runtime.summary)
+                app.router.add_get("/api/profiles/{name}/dialogs", runtime.dialogs)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    summary_response = await client.get(
+                        "/api/profiles/default/summary", headers=headers,
+                    )
+                    dialogs_response = await client.get(
+                        "/api/profiles/default/dialogs", headers=headers,
+                    )
+                    self.assertEqual(summary_response.status, 200)
+                    self.assertEqual(dialogs_response.status, 200)
+                    summary = await summary_response.json()
+                    dialogs = await dialogs_response.json()
+                    self.assertNotEqual(summary["thread_name"], "MainThread")
+                    self.assertNotEqual(dialogs["thread_name"], "MainThread")
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
     def test_archive_media_sort_index_is_created_and_used(self):
         import combined_multi_account as app_module
 
