@@ -27,17 +27,12 @@ try:
 except (OSError, ValueError):
     raise SystemExit(1)
 
-valid = (
-    bool(cfg.get("api_id"))
-    and bool(cfg.get("api_hash"))
-    and bool(re.fullmatch(r"-100\d+", str(cfg.get("target_chat_id") or "")))
-    and bool(cfg.get("bot_token"))
-)
+valid = bool(cfg.get("api_id")) and bool(cfg.get("api_hash"))
 raise SystemExit(0 if valid else 1)
 PY
 then
   echo
-  echo "Первичная настройка не завершена или ID форума некорректен."
+  echo "Не заданы API ID/API HASH Telegram."
   echo "Открываю мастер настройки повторно; сохранённые API-ключи будут оставлены."
   .venv/bin/python combined_multi_account.py setup
 fi
