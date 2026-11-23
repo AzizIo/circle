@@ -960,7 +960,10 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('withButton($("submitLoginPassword"),"Проверяю 2FA…"', html)
         self.assertIn('path.includes("/login/")', html)
         self.assertIn('localStorage.setItem("circles_auth_profile",name)', html)
-        self.assertIn("Авторизация завершена, но список профилей не обновлён", html)
+        self.assertIn('if(d.stage==="done"){await loadProfiles();$("authProfile").value=name', html)
+        self.assertIn('Не удалось начать авторизацию:', html)
+        self.assertIn('Код не принят:', html)
+        self.assertIn('Пароль 2FA не принят:', html)
         self.assertIn("Запрос запуска профиля", html)
         self.assertIn("Запрос остановки профиля", html)
 
