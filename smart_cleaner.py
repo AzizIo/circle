@@ -124,7 +124,15 @@ class SmartCleaner:
             last_message_at TEXT, protected_reason TEXT NOT NULL DEFAULT '',
             scanned_at REAL NOT NULL, updated_at REAL NOT NULL
         );
-        CREATE INDEX IF NOT EXISTS idx_catalog_category ON catalog(category, peer_type);
+        -- Read-heavy catalog queries are ordered by archive state, unread count and title.
+        CREATE INDEX IF NOT EXISTS idx_catalog_sort
+            ON catalog(is_archived ASC, unread_count DESC, title COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_catalog_peer_sort
+            ON catalog(peer_type, is_archived ASC, unread_count DESC, title COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_catalog_category_sort
+            ON catalog(category, is_archived ASC, unread_count DESC, title COLLATE NOCASE);
+        CREATE INDEX IF NOT EXISTS idx_catalog_category_peer_sort
+            ON catalog(category, peer_type, is_archived ASC, unread_count DESC, title COLLATE NOCASE);
         CREATE INDEX IF NOT EXISTS idx_catalog_scanned ON catalog(scanned_at);
         CREATE TABLE IF NOT EXISTS cleanup_jobs (
             id TEXT PRIMARY KEY, status TEXT NOT NULL, category TEXT NOT NULL,
@@ -144,6 +152,20 @@ class SmartCleaner:
             os.chmod(self.path, 0o600)
         except OSError:
             pass
+
+    def _read_connection(self) -> sqlite3.Connection:
+        """Open an isolated read-only connection for UI/catalog queries.
+
+        The writer connection stays on the service thread. Read-only connections
+        can safely be created and closed inside asyncio worker threads while a
+        scan is committing through WAL.
+        """
+        uri = self.path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=5)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA query_only=ON")
+        return conn
 
     @staticmethod
     def _is_rate_limit(exc: BaseException) -> bool:
@@ -283,26 +305,34 @@ class SmartCleaner:
         if not include_protected:
             where.append("protected_reason=''")
         clause = (" WHERE " + " AND ".join(where)) if where else ""
-        total = self.db.execute("SELECT COUNT(*) FROM catalog" + clause, args).fetchone()[0]
-        rows = self.db.execute("SELECT * FROM catalog" + clause +
-                               " ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE LIMIT ? OFFSET ?",
-                               (*args, max(1, min(int(limit), 500)), max(0, int(offset)))).fetchall()
-        return {"total": total, "items": [self._row_dict(r) for r in rows]}
+        conn = self._read_connection()
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM catalog" + clause, args).fetchone()[0]
+            rows = conn.execute("SELECT * FROM catalog" + clause +
+                                " ORDER BY is_archived ASC, unread_count DESC, title COLLATE NOCASE LIMIT ? OFFSET ?",
+                                (*args, max(1, min(int(limit), 500)), max(0, int(offset)))).fetchall()
+            return {"total": total, "items": [self._row_dict(r) for r in rows]}
+        finally:
+            conn.close()
 
     def catalog_stats(self) -> dict[str, Any]:
-        """Fast counts from the local catalog; no Telegram requests are made."""
-        total = self.db.execute("SELECT COUNT(*) FROM catalog").fetchone()[0]
-        groups, channels = self.db.execute(
-            "SELECT SUM(peer_type='group'), SUM(peer_type='channel') FROM catalog").fetchone()
-        protected = self.db.execute(
-            "SELECT COUNT(*) FROM catalog WHERE protected_reason<>'' OR is_creator=1 OR is_admin=1 OR is_scam=1").fetchone()[0]
-        unread = self.db.execute("SELECT COALESCE(SUM(unread_count),0) FROM catalog").fetchone()[0]
-        categories = {str(row[0]): int(row[1]) for row in self.db.execute(
-            "SELECT category,COUNT(*) FROM catalog GROUP BY category ORDER BY COUNT(*) DESC")}
-        last_scan = self.db.execute("SELECT MAX(scanned_at) FROM catalog").fetchone()[0]
-        return {"total": int(total), "groups": int(groups or 0), "channels": int(channels or 0),
-                "protected": int(protected), "unread": int(unread), "categories": categories,
-                "last_scan": float(last_scan) if last_scan else None}
+        """Read catalog counters without sharing the active writer connection."""
+        conn = self._read_connection()
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM catalog").fetchone()[0]
+            groups, channels = conn.execute(
+                "SELECT SUM(peer_type='group'), SUM(peer_type='channel') FROM catalog").fetchone()
+            protected = conn.execute(
+                "SELECT COUNT(*) FROM catalog WHERE protected_reason<>'' OR is_creator=1 OR is_admin=1 OR is_scam=1").fetchone()[0]
+            unread = conn.execute("SELECT COALESCE(SUM(unread_count),0) FROM catalog").fetchone()[0]
+            categories = {str(row[0]): int(row[1]) for row in conn.execute(
+                "SELECT category,COUNT(*) FROM catalog GROUP BY category ORDER BY COUNT(*) DESC")}
+            last_scan = conn.execute("SELECT MAX(scanned_at) FROM catalog").fetchone()[0]
+            return {"total": int(total), "groups": int(groups or 0), "channels": int(channels or 0),
+                    "protected": int(protected), "unread": int(unread), "categories": categories,
+                    "last_scan": float(last_scan) if last_scan else None}
+        finally:
+            conn.close()
 
     @staticmethod
     def _row_dict(row: sqlite3.Row) -> dict[str, Any]:
