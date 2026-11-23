@@ -191,12 +191,12 @@ DEFAULTS = {
     "data_dir": "data",
     "session_name": "circles",
     "ignore_users": [],      # id людей, чьи медиа не сохраняем
-    "bot_token": "",         # токен бота-панели от @BotFather (необязательно)
-    "paused": False,         # пауза архивации (переключается кнопкой в боте)
+    "bot_token": "",         # legacy config field; web control does not require a Telegram bot
+    "paused": False,         # пауза архивации (переключается в веб-панели)
     "broadcast_interval_min": 60,   # рассылка: пауза между кругами, минут
     "broadcast_hours": 12,          # рассылка: сколько часов работать после старта
     "broadcast_autostart": False,   # запускать рассылку вместе с сервисом
-    "broadcast_auto_subscribe": True,  # фоновая обработка ссылок от ботов независимо от состояния рассылки
+    "broadcast_auto_subscribe": True,  # link capture and queue execution only while a campaign is active
     "broadcast_auto_subscribe_user_set": False,  # сохранить явный выбор владельца
     "broadcast_auto_subscribe_gap_seconds": 90,  # пауза между успешными действиями автоподписки
     "broadcast_auto_subscribe_daily_limit": 15,   # консервативный rolling limit для вступлений за 24 часа
@@ -322,7 +322,7 @@ def add_account_profile(name: str) -> Path:
         "account_label": name,
         "session_name": "circles",
         "data_dir": str(Path("accounts") / name / "data"),
-        "bot_token": "",             # each profile needs its own bot token, if a panel is desired
+        "bot_token": "",             # legacy compatibility; web panel requires no Telegram bot token
         "ignore_users": [],
         "archive_media_types": ["round_video"],
         "broadcast_exclude": [],
@@ -6992,7 +6992,6 @@ def show_status(cfg):
     print(f"Файл сессии:       {'есть' if sess.exists() else 'нет (нужен вход)'}")
     problems = cfg_problems(cfg)
     print(f"Настройки:         {'OK' if not problems else '; '.join(problems)}")
-    print(f"Бот-панель:        {'токен задан' if cfg.get('bot_token') else 'не настроена (токен от @BotFather)'}")
     print(f"Тем (людей):       {s['topics']}")
     print(f"Медиа всего:       {s['total']}  (отправлено {s['sent']}, ждут повтора {s['unsent']})")
     print(f"Последнее медиа:  {s['last'] or '-'}")
@@ -7012,14 +7011,13 @@ SETTINGS = [
     ("keep_local", "Хранить копии медиа на диске VPS", "bool"),
     ("data_dir", "Папка данных", "str"),
     ("session_name", "Имя файла сессии", "str"),
-    ("bot_token", "Токен бота-панели (@BotFather)", "secret"),
     ("broadcast_interval_min", "Рассылка: интервал между кругами (мин)", "int"),
     ("broadcast_hours", "Рассылка: длительность (часов)", "int"),
-    ("broadcast_autostart", "Рассылка стартует вместе с сервисом", "bool"),
-    ("broadcast_auto_subscribe", "Фоновая автоподписка по ссылкам ботов", "bool"),
+    ("broadcast_autostart", "Legacy: автозапуск рассылки при старте", "bool"),
+    ("broadcast_auto_subscribe", "Автоподписка во время активной кампании", "bool"),
     ("broadcast_spambot", "Рассылка: писать @SpamBot при спам-блоке", "bool"),
     ("broadcast_notify_waves", "Рассылка: отчёт после каждой волны", "bool"),
-    ("tz_offset", "Часовой пояс для времени в боте (UTC+N)", "int"),
+    ("tz_offset", "Часовой пояс для времени в журналах (UTC+N)", "int"),
     ("low_disk_percent", "Предупреждать, если свободно меньше N% диска", "int"),
 ]
 
@@ -7151,57 +7149,48 @@ def show_log(cfg):
 
 
 def setup_wizard():
-    """Первичная настройка одной командой: ключи -> вход в аккаунт -> проверка -> автозапуск.
-    После неё сервером можно больше не заниматься: всё управление - из бота в Telegram."""
+    """Create local API settings; Telegram profile login is managed from the web panel."""
     cfg = load_cfg()
-    print("\n=== Первичная настройка ===")
-    print("Нужно один раз. Дальше всё управление - из бота в Telegram.\n")
-    steps = [("api_id", "API ID (my.telegram.org -> API development tools)", int),
-             ("api_hash", "API HASH (оттуда же)", str),
-             ("target_chat_id", "ID группы-форума для архива медиа (формат -100...)", int),
-             ("bot_token", "Токен бота-панели (создай у @BotFather, формат 123456789:AAH...)", str)]
-    # A previously interrupted setup saves each field immediately. Detect a malformed
-    # positive chat ID so rerunning the wizard asks for it again instead of skipping it.
-    if cfg.get("target_chat_id") and not re.fullmatch(r"-100\d+", str(cfg["target_chat_id"])):
-        print("Сохранённый ID группы-форума некорректен. Запрошу его повторно.")
-        cfg["target_chat_id"] = 0
-        save_cfg(cfg)
+    print("\n=== Первичная настройка CIRCLES CONTROL ===")
+    print("Создадим настройки веб-панели. Токен Telegram-бота управления не требуется.\n")
+
+    steps = [
+        ("api_id", "API ID (my.telegram.org -> API development tools)", int),
+        ("api_hash", "API HASH (оттуда же)", str),
+    ]
     for key, title, conv in steps:
-        while not cfg[key]:
+        while not cfg.get(key):
             raw = ask(title)
             if not raw:
                 continue
             try:
-                val = conv(raw)
+                value = conv(raw)
             except (TypeError, ValueError):
                 print("Не похоже на то, что нужно. Ещё раз.")
                 continue
-            if key == "target_chat_id" and not re.fullmatch(r"-100\d+", str(val)):
-                print("Нужен ID супергруппы/форума Telegram с префиксом -100, например -1001234567890.")
+            if key == "api_hash" and not value:
                 continue
-            if key == "bot_token" and not re.fullmatch(r"\d+:[\w-]{20,}", val):
-                print("Это не похоже на токен. Формат: 123456789:AAH... (от @BotFather)")
-                continue
-            if key == "api_hash" and not val:
-                continue
-            cfg[key] = val
-        save_cfg(cfg)
-    ddir = data_dir(cfg)
-    setup_logging(ddir)
-    print("\nШаг 2/3. Вход в аккаунт Telegram (код придёт в Telegram).")
-    telegram_action(cfg, lambda: run_login(cfg, ddir))
-    print("\nШаг 3/3. Проверка.")
+            cfg[key] = value
+            save_cfg(cfg)
 
-    def _check():
-        async def inner():
-            for ok, text in await run_check(cfg, ddir):
-                print(("  [OK]  " if ok else "  [!!]  ") + text)
-        return inner()
-    telegram_action(cfg, _check)
-    print("\nУстанавливаю автозапуск...")
-    print(install_service())
-    print("\nГотово. Осталось одно: открой своего бота в Telegram и нажми /start.")
-    print("Дальше рассылка, статус, логи и ошибки - в боте. На сервер заходить не нужно.")
+    raw_target = ask("ID группы-форума для архива медиа (-100..., можно указать позже)")
+    if raw_target:
+        try:
+            target_id = int(raw_target)
+        except (TypeError, ValueError):
+            print("Некорректный ID. Поле оставлено без изменений.")
+        else:
+            if re.fullmatch(r"-100\d+", str(target_id)):
+                cfg["target_chat_id"] = target_id
+                save_cfg(cfg)
+            else:
+                print("Нужен ID супергруппы/форума с префиксом -100. Поле оставлено без изменений.")
+
+    data_dir(cfg)
+    print("\nНастройки сохранены.")
+    print("Запусти ./start.sh — веб-панель поднимется независимо от Telegram-аккаунтов.")
+    print("Открой http://127.0.0.1:8765 через SSH-туннель.")
+    print("В разделе «Аккаунты» авторизуй и запусти основной профиль; токен @BotFather не нужен.")
     return cfg
 
 
