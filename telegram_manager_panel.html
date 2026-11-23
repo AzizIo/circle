@@ -67,10 +67,10 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
  html{scroll-behavior:auto}
  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
 }
-@keyframes scanPulse{from{transform:translateX(-125%)}to{transform:translateX(330%)}}#scanProgressBar.indeterminate{width:32%;animation:scanPulse 1.4s ease-in-out infinite alternate}#scanProgressBar{transition:width .25s ease}.recipient-card.is-collapsed #recipientsPanelBody{display:none}.recipient-card .recipient-chevron{display:inline-block;transition:transform .18s ease;font-size:17px;line-height:1}.recipient-card.is-collapsed .recipient-chevron{transform:rotate(-90deg)}.recipient-card #toggleRecipientsPanel{display:inline-flex;align-items:center;gap:8px}.recipient-card #recipientActionFeedback{min-height:18px}.recipient-card #recipientActionFeedback[data-state="error"]{color:#ff9eaa}.recipient-card #recipientActionFeedback[data-state="success"]{color:#86e6b4}.recipient-card #recipientActionFeedback[data-state="busy"]{color:#f5d38e}</style></head><body>
+@keyframes scanPulse{from{transform:translateX(-125%)}to{transform:translateX(330%)}}#scanProgressBar.indeterminate{width:32%;animation:scanPulse 1.4s ease-in-out infinite alternate}#scanProgressBar{transition:width .25s ease}.recipient-card.is-collapsed #recipientsPanelBody{display:none}.recipient-card .recipient-chevron{display:inline-block;transition:transform .18s ease;font-size:17px;line-height:1}.recipient-card.is-collapsed .recipient-chevron{transform:rotate(-90deg)}.recipient-card #toggleRecipientsPanel{display:inline-flex;align-items:center;gap:8px}.recipient-card #recipientActionFeedback{min-height:18px}.recipient-card #recipientActionFeedback[data-state="error"]{color:#ff9eaa}.recipient-card #recipientActionFeedback[data-state="success"]{color:#86e6b4}.recipient-card #recipientActionFeedback[data-state="busy"]{color:#f5d38e}#archiveCatalogFeedback[data-state="busy"],#archiveMediaFeedback[data-state="busy"]{color:var(--yellow)}#archiveCatalogFeedback[data-state="success"],#archiveMediaFeedback[data-state="success"]{color:var(--green)}#archiveCatalogFeedback[data-state="error"],#archiveMediaFeedback[data-state="error"]{color:var(--red)}</style></head><body>
 <div class="app">
 <aside class="sidebar">
-<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9.10</small></div></div>
+<div class="brand"><div class="brandmark">C</div><div class="brandname">CIRCLES CONTROL<small>TELEGRAM WORKSPACE · 3.9.11</small></div></div>
 <div><div class="navlabel">Рабочее пространство</div><nav class="nav" id="nav">
 <a href="#overview" data-page="overview" class="active"><span class="ico">◈</span>Обзор</a>
 <a href="#chats" data-page="chats"><span class="ico">▤</span>Чаты / Cleaner</a>
@@ -128,14 +128,14 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
 
 <section class="page" id="page-archive"><div class="heading"><div><div class="eyebrow">MEDIA ARCHIVER</div><h1>Архиватор</h1><p>Типы входящих медиа, целевая группа и параметры обработки.</p></div><span class="pill good" id="archiveState">—</span></div>
 <div class="card"><h2>Основные параметры</h2><div class="formgrid"><div class="field"><label>ID группы-форума (-100…)</label><input class="input" id="archiveTarget" type="number" placeholder="-100…"></div><div><label class="checkline"><input type="checkbox" id="mediaRound"> Кружки / round video</label><label class="checkline"><input type="checkbox" id="mediaPhoto"> Фото</label><label class="checkline"><input type="checkbox" id="mediaVideo"> Видео</label></div><div><label class="checkline"><input type="checkbox" id="archivePaused"> Пауза архиватора</label><label class="checkline"><input type="checkbox" id="archiveOutgoing"> Сохранять исходящие</label></div><div><label class="checkline"><input type="checkbox" id="archiveInfo"> Подпись с датой</label><label class="checkline"><input type="checkbox" id="archiveLocal"> Копии на диске VPS</label></div></div><button class="btn primary" style="margin-top:15px" id="saveArchive">Сохранить настройки архиватора</button><div class="notice" style="margin-top:12px">Существующие данные и файлы сессии не перемещаются.</div></div>
-<div class="card" style="margin-top:15px"><div class="row"><div><h2>Каталог архива</h2><p class="smalltext">Сохранённые темы, число медиа, статус отправки и история файлов по каждому человеку.</p></div><button class="btn" id="refreshArchiveCatalog">↻ Обновить архив</button></div>
+<div class="card" style="margin-top:15px"><div class="row"><div><h2>Каталог архива</h2><p class="smalltext">Сохранённые темы, число медиа, статус отправки и история файлов по каждому человеку.</p></div><div class="toolbar"><span class="smalltext" id="archiveCatalogFeedback" data-state="idle" aria-live="polite">Ожидает загрузки</span><button class="btn" id="refreshArchiveCatalog">↻ Обновить архив</button></div></div>
 <div class="stats" style="margin-top:12px"><div class="stat"><div class="label">Темы</div><div class="value" id="arTopics">—</div></div><div class="stat"><div class="label">Медиа записано</div><div class="value" id="arTotal">—</div></div><div class="stat"><div class="label">Отправлено</div><div class="value" id="arSent">—</div></div><div class="stat"><div class="label">Ожидают отправки</div><div class="value" id="arPending">—</div></div></div>
 <div class="toolbar"><input class="input" id="archivePeopleSearch" placeholder="Поиск по имени или Telegram ID…"><button class="btn" id="searchArchivePeople">Найти</button></div>
-<div class="chatlist" id="archivePeople" style="margin-top:12px"><div class="empty">Архив ещё не загружен</div></div>
-<div class="pagefoot"><span id="archivePeoplePage">—</span><div class="toolbar"><button class="btn sm" id="archivePeoplePrev">← Назад</button><button class="btn sm" id="archivePeopleNext">Далее →</button></div></div>
-<div class="separator"></div><h2>Медиа выбранного человека</h2><div class="smalltext" id="archiveMediaHeading">Выбери человека выше, чтобы увидеть его архив.</div>
-<div class="chatlist" id="archiveMedia"><div class="empty">Записи медиа не выбраны</div></div>
-<div class="pagefoot"><span id="archiveMediaPage">—</span><div class="toolbar"><button class="btn sm" id="archiveMediaPrev">← Назад</button><button class="btn sm" id="archiveMediaNext">Далее →</button></div></div>
+<div class="chatlist" id="archivePeople" aria-busy="false" style="margin-top:12px"><div class="empty">Архив ещё не загружен</div></div>
+<div class="pagefoot"><span id="archivePeoplePage">—</span><div class="toolbar"><button class="btn sm" id="archivePeoplePrev" disabled>← Назад</button><button class="btn sm" id="archivePeopleNext">Далее →</button></div></div>
+<div class="separator"></div><div class="row"><h2>Медиа выбранного человека</h2><span class="smalltext" id="archiveMediaFeedback" data-state="idle" aria-live="polite">Ожидает выбора</span></div><div class="smalltext" id="archiveMediaHeading">Выбери человека выше, чтобы увидеть его архив.</div>
+<div class="chatlist" id="archiveMedia" aria-busy="false"><div class="empty">Записи медиа не выбраны</div></div>
+<div class="pagefoot"><span id="archiveMediaPage">—</span><div class="toolbar"><button class="btn sm" id="archiveMediaPrev" disabled>← Назад</button><button class="btn sm" id="archiveMediaNext" disabled>Далее →</button></div></div>
 <div class="notice" style="margin-top:12px">Здесь отображаются только записи локальной БД. Панель не открывает публичный доступ к файлам на диске и не меняет существующие медиа.</div>
 </div>
 <div class="card media-cleaner-card" style="margin-top:15px"><div class="row"><div><h2>Очистка медиа-каталога</h2><p class="smalltext">Проверка папки videos: поиск временных и потерявших связь с базой файлов.</p></div><button class="btn primary" id="scanMediaCleanup">⌕ Проверить каталог</button></div><div class="stats" style="margin-top:12px"><div class="stat"><div class="label">Файлов на диске</div><div class="value" id="mediaDiskFiles">—</div></div><div class="stat"><div class="label">Объём каталога</div><div class="value" id="mediaDiskBytes">—</div></div><div class="stat"><div class="label">Кандидатов</div><div class="value" id="mediaOrphanCount">—</div></div><div class="stat"><div class="label">Можно освободить</div><div class="value" id="mediaCleanupBytes">—</div></div></div><div id="mediaCleanupPreview" class="media-preview"><div class="empty">Нажми «Проверить каталог», чтобы построить безопасный предпросмотр.</div></div><div class="toolbar" style="margin-top:12px"><button class="btn danger" id="executeMediaCleanup" disabled>Очистить найденные файлы</button><span class="smalltext" id="mediaCleanupHint">Ничего не удаляется без отдельного подтверждения.</span></div><div class="notice" style="margin-top:12px">Защищены файлы, на которые ссылается circles.db, а также новые файлы младше 24 часов. Удаляются только старые временные файлы и неиспользуемые копии. Записи архива не удаляются.</div></div>
@@ -151,7 +151,7 @@ body{background-image:radial-gradient(ellipse at 78% -12%,rgba(122,91,224,.19),t
 <dialog class="modal" id="confirmModal"><h2 id="modalTitle">Подтверждение</h2><p id="modalText"></p><div class="field" id="modalInputField"><label id="modalLabel">Подтверждение</label><input class="input" id="modalInput" autocomplete="off"></div><div class="modal-actions"><button class="btn" id="modalCancel">Отмена</button><button class="btn danger" id="modalConfirm">Подтвердить</button></div></dialog><div class="toast" id="toast"></div>
 <script>
 const $=id=>document.getElementById(id);
-const S={profile:"",profiles:[],chatPage:0,recipientPage:0,archivePage:0,archiveMediaPage:0,archiveUser:null,chatSelected:new Set(),recipientSelected:new Set(),recipientInitialized:false,recipientDirty:false,chatTotal:0,recipientTotal:0,savedPosts:[],mediaCleanupPreview:null,logLoading:false,modalResolve:null,lastChatPoll:0,lastRecipientPoll:0,lastArchivePoll:0,lastProfilePoll:0,inflight:Object.create(null),latest:Object.create(null)};
+const S={profile:"",profiles:[],chatPage:0,recipientPage:0,archivePage:0,archiveMediaPage:0,archiveUser:null,archiveTotal:0,archiveMediaTotal:0,chatSelected:new Set(),recipientSelected:new Set(),recipientInitialized:false,recipientDirty:false,chatTotal:0,recipientTotal:0,savedPosts:[],mediaCleanupPreview:null,logLoading:false,modalResolve:null,lastChatPoll:0,lastRecipientPoll:0,lastArchivePoll:0,lastProfilePoll:0,inflight:Object.create(null),latest:Object.create(null)};
 const PAGE=100,REC_PAGE=100;
 function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 function fmt(n){return new Intl.NumberFormat("ru-RU").format(Number(n||0))}
@@ -205,10 +205,10 @@ function go(p){
 }
 document.querySelectorAll(".nav a").forEach(a=>a.onclick=e=>{e.preventDefault();go(a.dataset.page)});
 document.querySelectorAll("[data-go]").forEach(b=>b.onclick=()=>go(b.dataset.go));
-async function loadProfiles(){const d=await api("/api/profiles");const old=S.profile,saved=localStorage.getItem("circles_active_profile")||"";S.profiles=d.profiles||[];const preferred=old||saved;const next=S.profiles.some(p=>p.name===preferred)?preferred:(S.profiles.find(p=>p.name==="default")||S.profiles[0]||{}).name||"";if(next!==S.profile){S.profile=next;S.chatPage=0;S.recipientPage=0;S.chatSelected.clear();S.recipientSelected.clear();S.recipientItems=[];S.savedPosts=[];S.recipientInitialized=false;S.recipientDirty=false;S.latest=Object.create(null)}if(S.profile)localStorage.setItem("circles_active_profile",S.profile);restoreRecipientsCollapsed();const sel=$("profileSelect");sel.innerHTML="";S.profiles.forEach(p=>{const o=document.createElement("option");o.value=p.name;o.textContent=(p.label||p.name)+" · "+(p.active?"онлайн":p.status||"оффлайн");sel.append(o)});sel.value=S.profile;const auth=$("authProfile");auth.innerHTML=S.profiles.filter(p=>p.name!=="default").map(p=>'<option value="'+esc(p.name)+'">'+esc(p.label||p.name)+'</option>').join("");connected(!!S.profile);$("profileStatus").textContent=(S.profiles.find(p=>p.name===S.profile)||{}).status||"Нет профиля";drawAccounts()}
+async function loadProfiles(){const d=await api("/api/profiles");const old=S.profile,saved=localStorage.getItem("circles_active_profile")||"";S.profiles=d.profiles||[];const preferred=old||saved;const next=S.profiles.some(p=>p.name===preferred)?preferred:(S.profiles.find(p=>p.name==="default")||S.profiles[0]||{}).name||"";if(next!==S.profile){S.profile=next;S.chatPage=0;S.recipientPage=0;S.archivePage=0;S.archiveMediaPage=0;S.archiveUser=null;S.archiveTotal=0;S.archiveMediaTotal=0;S.chatSelected.clear();S.recipientSelected.clear();S.recipientItems=[];S.savedPosts=[];S.recipientInitialized=false;S.recipientDirty=false;S.latest=Object.create(null)}if(S.profile)localStorage.setItem("circles_active_profile",S.profile);restoreRecipientsCollapsed();const sel=$("profileSelect");sel.innerHTML="";S.profiles.forEach(p=>{const o=document.createElement("option");o.value=p.name;o.textContent=(p.label||p.name)+" · "+(p.active?"онлайн":p.status||"оффлайн");sel.append(o)});sel.value=S.profile;const auth=$("authProfile");auth.innerHTML=S.profiles.filter(p=>p.name!=="default").map(p=>'<option value="'+esc(p.name)+'">'+esc(p.label||p.name)+'</option>').join("");connected(!!S.profile);$("profileStatus").textContent=(S.profiles.find(p=>p.name===S.profile)||{}).status||"Нет профиля";drawAccounts()}
 async function connect(){const t=token();if(!t)throw new Error("Введи токен доступа");localStorage.setItem("circles_web_token",t);$("token").value=t;await loadProfiles();if(!S.profile)throw new Error("Нет доступных профилей");await loadDashboard();toast("Панель подключена","success")}
 $("connect").onclick=()=>withButton($("connect"),"Подключаю…",connect).catch(e=>toast(e.message,"error"));
-$("profileSelect").onchange=()=>{S.profile=$("profileSelect").value;if(S.profile)localStorage.setItem("circles_active_profile",S.profile);restoreRecipientsCollapsed();S.latest=Object.create(null);S.chatPage=0;S.recipientPage=0;S.chatSelected.clear();S.recipientSelected.clear();S.recipientItems=[];S.savedPosts=[];S.recipientInitialized=false;S.recipientDirty=false;$("recipientList").innerHTML='<div class="empty">Загружаю группы выбранного аккаунта…</div>';$("postList").innerHTML='Загрузи сообщения из Saved Messages.';$("bcAccountSource").textContent="Источник чатов: "+(S.profile||"—");$("bcStartFeedback").textContent="Аккаунт изменён. Проверяю его отдельный список чатов…";if(S.profile){loadDashboard().catch(e=>toast(e.message,"error"));loadSettings().catch(e=>toast(e.message,"error"));const p=document.querySelector(".page.active");if(p&&p.id==="page-chats"){loadChatStats().catch(e=>toast(e.message,"error"));loadChats().catch(e=>toast(e.message,"error"))}if(p&&p.id==="page-broadcast"){loadBroadcast().catch(e=>toast(e.message,"error"));loadRecipients(false).catch(e=>toast(e.message,"error"))}if(p&&p.id==="page-archive")loadArchiveCatalog()}};
+$("profileSelect").onchange=()=>{S.profile=$("profileSelect").value;if(S.profile)localStorage.setItem("circles_active_profile",S.profile);restoreRecipientsCollapsed();S.latest=Object.create(null);S.chatPage=0;S.recipientPage=0;S.archivePage=0;S.archiveMediaPage=0;S.archiveUser=null;S.archiveTotal=0;S.archiveMediaTotal=0;$("archiveMediaHeading").textContent="Выбери человека из архива выбранного аккаунта.";$("archiveMediaFeedback").textContent="Ожидает выбора";$("archiveMediaFeedback").dataset.state="idle";$("archiveMedia").innerHTML='<div class="empty">Сначала обнови архив выбранного аккаунта.</div>';$("archiveMedia").setAttribute("aria-busy","false");S.chatSelected.clear();S.recipientSelected.clear();S.recipientItems=[];S.savedPosts=[];S.recipientInitialized=false;S.recipientDirty=false;$("recipientList").innerHTML='<div class="empty">Загружаю группы выбранного аккаунта…</div>';$("postList").innerHTML='Загрузи сообщения из Saved Messages.';$("bcAccountSource").textContent="Источник чатов: "+(S.profile||"—");$("bcStartFeedback").textContent="Аккаунт изменён. Проверяю его отдельный список чатов…";if(S.profile){loadDashboard().catch(e=>toast(e.message,"error"));loadSettings().catch(e=>toast(e.message,"error"));const p=document.querySelector(".page.active");if(p&&p.id==="page-chats"){loadChatStats().catch(e=>toast(e.message,"error"));loadChats().catch(e=>toast(e.message,"error"))}if(p&&p.id==="page-broadcast"){loadBroadcast().catch(e=>toast(e.message,"error"));loadRecipients(false).catch(e=>toast(e.message,"error"))}if(p&&p.id==="page-archive")loadArchiveCatalog()}};
 $("refreshAll").onclick=()=>withButton($("refreshAll"),"Обновляю…",loadDashboard).catch(e=>toast(e.message,"error"));
 async function loadDashboard(){need();const profile=S.profile,version=(S.latest.dashboard=(S.latest.dashboard||0)+1);const [d,s,m]=await Promise.all([api(url("/dashboard")),api("/api/system"),api(url("/metrics")).catch(()=>null)]);if(S.profile!==profile||S.latest.dashboard!==version)return;const c=d.catalog||{},b=d.broadcast||{},disk=d.disk||{};$("ovChats").textContent=fmt(c.total);$("ovChatHint").textContent=c.last_scan?"Сканировано "+new Date(c.last_scan*1000).toLocaleString("ru-RU"):"Нужна синхронизация";$("ovGroups").textContent=fmt(c.groups)+" / "+fmt(c.channels);$("ovSent").textContent=fmt(b.life_ok);$("ovWaves").textContent=fmt(b.life_waves)+" завершённых волн";$("ovDisk").textContent=bytes(disk.free);$("ovDiskHint").textContent="из "+bytes(disk.total);$("healthSession").textContent="Подключена";$("healthArchive").textContent=d.archive.paused?"На паузе":"Работает";$("healthBroadcast").textContent=b.status||"Нет данных";$("healthAccounts").textContent=fmt(s.profiles_online);$("ovCampaign").textContent=b.status||"Движок недоступен";$("ovScan").textContent=c.last_scan?fmt(c.total)+" записей":"Каталог не загружен";if(m){const mem=m.memory||{},db=m.sqlite||{},apiStats=m.api||{};$("metricCpu").textContent=m.cpu_percent==null?"—":m.cpu_percent.toFixed(1)+"%";$("metricCpuHint").textContent="Загрузка всего хоста";$("metricRam").textContent=mem.used_percent==null?"—":mem.used_percent.toFixed(1)+"%";$("metricRamHint").textContent=bytes(mem.available_bytes)+" доступно · RSS "+bytes(mem.process_rss_bytes);$("metricSqlite").textContent=bytes(db.total_bytes);$("metricSqliteHint").textContent="Архив "+bytes(db.archive_bytes)+" · каталог "+bytes(db.catalog_bytes);$("metricApi").textContent=apiStats.p95_ms==null?"—":Math.round(apiStats.p95_ms)+" ms";$("metricApiHint").textContent="Среднее "+(apiStats.avg_ms==null?"—":Math.round(apiStats.avg_ms)+" ms")+" · "+fmt(apiStats.requests_60s)+" запросов";$("metricsUpdated").textContent="Обновлено "+new Date(m.sampled_at*1000).toLocaleTimeString("ru-RU")}else{$("metricsUpdated").textContent="Метрики недоступны"}}
 async function loadChatStats(){need();const d=await api(url("/summary"));$("chatTotal").textContent=fmt(d.total);$("chatGroups").textContent=fmt(d.groups);$("chatChannels").textContent=fmt(d.channels);$("chatProtected").textContent=fmt(d.protected)}
@@ -238,37 +238,116 @@ $("stopBc").onclick=async()=>{const b=$("stopBc"),hint=$("bcStartFeedback"),prof
 async function loadSettings(){try{need();const d=await api(url("/settings"));const set=(id,v)=>$(id).checked=!!v;$("bcHours").value=d.broadcast_hours??12;$("bcInterval").value=d.broadcast_interval_min??60;$("setDelayMin").value=d.broadcast_delay_min??.6;$("setDelayMax").value=d.broadcast_delay_max??1.2;$("setLongPause").value=d.broadcast_long_pause_chance??.02;$("setDiskLimit").value=d.low_disk_percent??10;$("setSubGap").value=d.broadcast_auto_subscribe_gap_seconds??90;$("setSubDaily").value=d.broadcast_auto_subscribe_daily_limit??15;$("setSubMessage").value=d.broadcast_auto_subscribe_max_per_message??24;$("setSubBatch").value=d.broadcast_auto_subscribe_batch_size??5;$("setSubRest").value=d.broadcast_auto_subscribe_batch_pause_minutes??30;set("setNotify",d.broadcast_notify_waves);set("setAutostart",d.broadcast_autostart);set("setSpamBot",d.broadcast_spambot);set("setAutoSub",d.broadcast_auto_subscribe);set("setSaveOutgoing",d.save_outgoing);set("setInfoMessage",d.info_message);set("setKeepLocal",d.keep_local);const types=d.archive_media_types||[];set("mediaRound",types.includes("round_video"));set("mediaPhoto",types.includes("photo"));set("mediaVideo",types.includes("video"));set("archivePaused",d.paused);set("archiveOutgoing",d.save_outgoing);set("archiveInfo",d.info_message);set("archiveLocal",d.keep_local);$("archiveTarget").value=d.target_chat_id||"";$("archiveState").textContent=d.paused?"На паузе":"Активен"}catch(e){toast(e.message,"error")}}
 async function scanMediaCleanup(){const b=$("scanMediaCleanup");try{b.disabled=true;b.textContent="Проверяю…";const d=await api(url("/media/cleanup/scan"));S.mediaCleanupPreview=d;$("mediaDiskFiles").textContent=fmt(d.total_files);$("mediaDiskBytes").textContent=bytes(d.total_bytes);$("mediaOrphanCount").textContent=fmt(d.candidate_count);$("mediaCleanupBytes").textContent=bytes(d.candidate_bytes);$("mediaCleanupHint").textContent=fmt(d.referenced_files)+" файлов защищены ссылками в circles.db · кандидаты старше 24 часов";$("mediaCleanupPreview").innerHTML=(d.samples||[]).map(x=>'<div class="media-file"><span><b>'+esc(x.name)+'</b><br><span class="muted">'+esc(x.reason)+'</span></span><span class="pill">'+bytes(x.size)+'</span></div>').join("")||'<div class="empty">Безопасных файлов для удаления не найдено. Архивные файлы защищены.</div>';$("executeMediaCleanup").disabled=!d.candidate_count;$("executeMediaCleanup").textContent=d.candidate_count?"Очистить "+fmt(d.candidate_count)+" файлов · "+bytes(d.candidate_bytes):"Очистка не требуется";toast("Проверка завершена: найдено "+fmt(d.candidate_count)+" кандидатов","success")}catch(e){toast(e.message,"error")}finally{b.disabled=false;b.textContent="⌕ Проверить каталог"}}
 $("scanMediaCleanup").onclick=scanMediaCleanup;
-$("executeMediaCleanup").onclick=async()=>{const p=S.mediaCleanupPreview;if(!p||!p.candidate_count)return;const confirmed=await askConfirm("Очистить медиа-каталог?","Удалятся только "+p.candidate_count+" старых файлов, проверенных как временные или неиспользуемые. Файлы, связанные с архивом, сохраняются.","Удалить файлы");if(!confirmed)return;const value="DELETE_ORPHANS "+p.candidate_count;const b=$("executeMediaCleanup");try{b.disabled=true;b.textContent="Удаляю…";const d=await api(url("/media/cleanup/execute"),{method:"POST",body:JSON.stringify({preview_id:p.preview_id,confirmation:value})});toast("Удалено "+fmt(d.deleted)+" файлов · освобождено "+bytes(d.deleted_bytes)+(d.failed?" · ошибок "+d.failed:""),"success");S.mediaCleanupPreview=null;await Promise.all([loadArchiveCatalog(),loadDashboard()])}catch(e){toast(e.message,"error")}finally{b.disabled=false;await scanMediaCleanup()}};
-async function loadArchiveCatalog(){
+$("executeMediaCleanup").onclick=async()=>{
+ const p=S.mediaCleanupPreview,b=$("executeMediaCleanup");
+ if(!p||!p.candidate_count||b.disabled)return;
+ let refreshPreview=false;
+ b.disabled=true;b.textContent="Ожидаю подтверждение…";
  try{
-  need();const profile=S.profile,page=S.archivePage,query=$("archivePeopleSearch").value,version=(S.latest.archive=(S.latest.archive||0)+1);
+  const confirmed=await askConfirm("Очистить медиа-каталог?","Удалятся только "+p.candidate_count+" старых файлов, проверенных как временные или неиспользуемые. Файлы, связанные с архивом, сохраняются.","Удалить файлы");
+  if(!confirmed){toast("Очистка отменена. Файлы не удалены.");return}
+  const value="DELETE_ORPHANS "+p.candidate_count;
+  b.textContent="Удаляю…";refreshPreview=true;
+  const d=await api(url("/media/cleanup/execute"),{method:"POST",body:JSON.stringify({preview_id:p.preview_id,confirmation:value})});
+  toast("Удалено "+fmt(d.deleted)+" файлов · освобождено "+bytes(d.deleted_bytes)+(d.failed?" · ошибок "+d.failed:""),"success");
+  S.mediaCleanupPreview=null;
+  await Promise.all([loadArchiveCatalog(),loadDashboard()]);
+ }catch(e){toast(e.message,"error")}
+ finally{
+  if(refreshPreview){await scanMediaCleanup()}
+  else{b.disabled=!S.mediaCleanupPreview||!S.mediaCleanupPreview.candidate_count;b.textContent=S.mediaCleanupPreview&&S.mediaCleanupPreview.candidate_count?"Очистить "+fmt(S.mediaCleanupPreview.candidate_count)+" файлов · "+bytes(S.mediaCleanupPreview.candidate_bytes):"Очистка не требуется"}
+ }
+};
+async function loadArchiveCatalog(){
+ const profile=S.profile,page=S.archivePage,query=$("archivePeopleSearch").value,version=(S.latest.archive=(S.latest.archive||0)+1);
+ const feedback=$("archiveCatalogFeedback"),list=$("archivePeople");
+ const updateControls=loading=>{
+  if(S.latest.archive!==version)return;
+  $("refreshArchiveCatalog").disabled=!!loading;
+  $("searchArchivePeople").disabled=!!loading;
+  $("archivePeoplePrev").disabled=!!loading||S.archivePage===0;
+  $("archivePeopleNext").disabled=!!loading||(S.archivePage+1)*50>=S.archiveTotal;
+ };
+ updateControls(true);
+ if(feedback){feedback.textContent="Загружаю страницу "+(page+1)+"…";feedback.dataset.state="busy"}
+ list.setAttribute("aria-busy","true");
+ try{
+  need();
   const q=new URLSearchParams({limit:"50",offset:String(page*50),query,compact:"1"});
   const [summary,data]=await Promise.all([api(url("/archive/summary")),api(url("/archive/people")+"?"+q)]);
   if(S.profile!==profile||S.archivePage!==page||$("archivePeopleSearch").value!==query||S.latest.archive!==version||document.querySelector(".page.active")?.id!=="page-archive")return;
+  S.archiveTotal=Number(data.total)||0;
   $("arTopics").textContent=fmt(summary.topics);$("arTotal").textContent=fmt(summary.total);$("arSent").textContent=fmt(summary.sent);$("arPending").textContent=fmt(summary.pending);
   $("archivePeople").innerHTML=(data.items||[]).map(x=>'<div class="chatrow"><div class="pill">'+fmt(x.media_count)+'</div><div><div class="chatname">'+esc(x.title||("User "+x.user_id))+'</div><div class="chatmeta">ID '+esc(x.user_id)+' · отправлено '+fmt(x.sent_count)+' · ожидают '+fmt(x.pending_count)+' · последнее '+esc(x.last_media||"—")+'</div></div><span class="chatstatus pill good">Архив</span><button class="btn sm" data-user="'+esc(x.user_id)+'">Медиа</button></div>').join("")||'<div class="empty">В архиве пока нет тем.</div>';
-  Array.from($("archivePeople").querySelectorAll("[data-user]")).forEach(b=>b.onclick=()=>{S.archiveUser=Number(b.dataset.user);S.archiveMediaPage=0;loadArchivePersonMedia()});
+  Array.from($("archivePeople").querySelectorAll("[data-user]")).forEach(b=>b.onclick=()=>{
+   S.archiveUser=Number(b.dataset.user);S.archiveMediaPage=0;
+   $("archiveMediaHeading").textContent="Telegram ID "+S.archiveUser+" · загружаю…";
+   $("archiveMediaFeedback").textContent="Загружаю записи медиа…";$("archiveMediaFeedback").dataset.state="busy";
+   $("archiveMedia").innerHTML='<div class="empty">Загружаю записи медиа…</div>';
+   $("archiveMedia").setAttribute("aria-busy","true");
+   $("archiveMediaPrev").disabled=true;$("archiveMediaNext").disabled=true;
+   return loadArchivePersonMedia(b);
+  });
   $("archivePeoplePage").textContent=data.total?((page*50+1)+"–"+Math.min((page+1)*50,data.total)+" из "+data.total):"Нет тем";
-  $("archivePeoplePrev").disabled=page===0;$("archivePeopleNext").disabled=(page+1)*50>=data.total;
- }catch(e){$("archivePeople").innerHTML='<div class="empty">'+esc(e.message)+'</div>';toast(e.message,"error")}
+  if(feedback){feedback.textContent="Загружено: "+fmt((data.items||[]).length)+" из "+fmt(S.archiveTotal)+" · "+new Date().toLocaleTimeString("ru-RU");feedback.dataset.state="success"}
+ }catch(e){
+  if(S.profile===profile&&S.latest.archive===version){
+   $("archivePeople").innerHTML='<div class="empty">'+esc(e.message)+'</div>';
+   if(feedback){feedback.textContent="Не удалось загрузить каталог: "+e.message;feedback.dataset.state="error"}
+   toast(e.message,"error");
+  }
+ }finally{
+  if(S.latest.archive===version){list.setAttribute("aria-busy","false");updateControls(false)}
+ }
 }
-async function loadArchivePersonMedia(){
+async function loadArchivePersonMedia(triggerButton){
+ const profile=S.profile,user=Number(S.archiveUser),page=S.archiveMediaPage;
+ if(!profile||!user)return false;
+ const version=(S.latest.archiveMedia=(S.latest.archiveMedia||0)+1);
+ const feedback=$("archiveMediaFeedback"),list=$("archiveMedia");
+ const triggerText=triggerButton?triggerButton.textContent:"";
+ const current=()=>S.profile===profile&&Number(S.archiveUser)===user&&S.archiveMediaPage===page&&S.latest.archiveMedia===version;
+ if(triggerButton){triggerButton.disabled=true;triggerButton.textContent="Загружаю…"}
+ $("archiveMediaPrev").disabled=true;$("archiveMediaNext").disabled=true;
+ list.setAttribute("aria-busy","true");
+ if(feedback){feedback.textContent="Загружаю записи…";feedback.dataset.state="busy"}
+ $("archiveMediaHeading").textContent="Telegram ID "+user+" · загрузка…";
+ list.innerHTML='<div class="empty">Загружаю записи медиа…</div>';
  try{
-  need();if(!S.archiveUser)return;
-  const q=new URLSearchParams({limit:"30",offset:String(S.archiveMediaPage*30),compact:"1"});
-  const d=await api(url("/archive/people/"+S.archiveUser+"/media")+"?"+q);
-  $("archiveMediaHeading").textContent="Telegram ID "+S.archiveUser+" · "+fmt(d.total)+" записей";
-  $("archiveMedia").innerHTML=(d.items||[]).map(x=>'<div class="chatrow"><div class="pill">'+esc(x.media_type||"media")+'</div><div><div class="chatname">Сообщение #'+esc(x.msg_id)+' · '+esc(x.file_name||"файл не прикреплён")+'</div><div class="chatmeta">'+esc(x.date_utc||"—")+' · '+bytes(x.file_size)+' · '+(x.outgoing?"исходящее":"входящее")+'</div></div><span class="chatstatus pill '+(x.sent?"good":"warn")+'">'+(x.sent?"Отправлено":"Ожидает")+'</span><span class="pill '+(x.file_available?"good":"warn")+'">'+(x.file_available?"На диске":"Нет файла")+'</span></div>').join("")||'<div class="empty">У этого человека нет записей медиа.</div>';
-  $("archiveMediaPage").textContent=d.total?((S.archiveMediaPage*30+1)+"–"+Math.min((S.archiveMediaPage+1)*30,d.total)+" из "+d.total):"Нет записей";
-  $("archiveMediaPrev").disabled=S.archiveMediaPage===0;$("archiveMediaNext").disabled=(S.archiveMediaPage+1)*30>=d.total;
- }catch(e){toast(e.message,"error")}
+  need();
+  const q=new URLSearchParams({limit:"30",offset:String(page*30),compact:"1"});
+  const d=await api(url("/archive/people/"+user+"/media")+"?"+q);
+  if(!current()||document.querySelector(".page.active")?.id!=="page-archive")return false;
+  S.archiveMediaTotal=Number(d.total)||0;
+  $("archiveMediaHeading").textContent="Telegram ID "+user+" · "+fmt(S.archiveMediaTotal)+" записей";
+  list.innerHTML=(d.items||[]).map(x=>'<div class="chatrow"><div class="pill">'+esc(x.media_type||"media")+'</div><div><div class="chatname">Сообщение #'+esc(x.msg_id)+' · '+esc(x.file_name||"файл не прикреплён")+'</div><div class="chatmeta">'+esc(x.date_utc||"—")+' · '+bytes(x.file_size)+' · '+(x.outgoing?"исходящее":"входящее")+'</div></div><span class="chatstatus pill '+(x.sent?"good":"warn")+'">'+(x.sent?"Отправлено":"Ожидает")+'</span><span class="pill '+(x.file_available?"good":"warn")+'">'+(x.file_available?"На диске":"Нет файла")+'</span></div>').join("")||'<div class="empty">У этого человека нет записей медиа.</div>';
+  $("archiveMediaPage").textContent=d.total?((page*30+1)+"–"+Math.min((page+1)*30,d.total)+" из "+d.total):"Нет записей";
+  if(feedback){feedback.textContent="Загружено: "+fmt((d.items||[]).length)+" из "+fmt(S.archiveMediaTotal);feedback.dataset.state="success"}
+  return true;
+ }catch(e){
+  if(current()){
+   list.innerHTML='<div class="empty">'+esc(e.message)+'</div>';
+   if(feedback){feedback.textContent="Не удалось загрузить медиа: "+e.message;feedback.dataset.state="error"}
+   toast(e.message,"error");
+  }
+  return false;
+ }finally{
+  if(triggerButton&&triggerButton.isConnected){triggerButton.disabled=false;triggerButton.textContent=triggerText}
+  if(current()){
+   list.setAttribute("aria-busy","false");
+   $("archiveMediaPrev").disabled=page===0;
+   $("archiveMediaNext").disabled=(page+1)*30>=S.archiveMediaTotal;
+  }
+ }
 }
 $("refreshArchiveCatalog").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};
-$("searchArchivePeople").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};let archiveSearchTimer=null;$("archivePeopleSearch").oninput=()=>{clearTimeout(archiveSearchTimer);archiveSearchTimer=setTimeout(()=>{S.archivePage=0;loadArchiveCatalog()},300)};
-$("archivePeoplePrev").onclick=()=>{S.archivePage=Math.max(0,S.archivePage-1);loadArchiveCatalog()};
-$("archivePeopleNext").onclick=()=>{S.archivePage++;loadArchiveCatalog()};
-$("archiveMediaPrev").onclick=()=>{S.archiveMediaPage=Math.max(0,S.archiveMediaPage-1);loadArchivePersonMedia()};
-$("archiveMediaNext").onclick=()=>{S.archiveMediaPage++;loadArchivePersonMedia()};
+$("searchArchivePeople").onclick=()=>{S.archivePage=0;loadArchiveCatalog()};
+let archiveSearchTimer=null;
+$("archivePeopleSearch").oninput=()=>{clearTimeout(archiveSearchTimer);archiveSearchTimer=setTimeout(()=>{S.archivePage=0;loadArchiveCatalog()},300)};
+$("archivePeoplePrev").onclick=()=>{if(S.archivePage>0){S.archivePage--;loadArchiveCatalog()}};
+$("archivePeopleNext").onclick=()=>{if((S.archivePage+1)*50<S.archiveTotal){S.archivePage++;loadArchiveCatalog()}};
+$("archiveMediaPrev").onclick=()=>{if(S.archiveMediaPage>0){S.archiveMediaPage--;loadArchivePersonMedia()}};
+$("archiveMediaNext").onclick=()=>{if((S.archiveMediaPage+1)*30<S.archiveMediaTotal){S.archiveMediaPage++;loadArchivePersonMedia()}};
 function settingsPayload(){return {broadcast_delay_min:Number($("setDelayMin").value),broadcast_delay_max:Number($("setDelayMax").value),broadcast_long_pause_chance:Number($("setLongPause").value),low_disk_percent:Number($("setDiskLimit").value),broadcast_auto_subscribe_gap_seconds:Number($("setSubGap").value),broadcast_auto_subscribe_daily_limit:Number($("setSubDaily").value),broadcast_auto_subscribe_max_per_message:Number($("setSubMessage").value),broadcast_auto_subscribe_batch_size:Number($("setSubBatch").value),broadcast_auto_subscribe_batch_pause_minutes:Number($("setSubRest").value),broadcast_notify_waves:$("setNotify").checked,broadcast_autostart:$("setAutostart").checked,broadcast_spambot:$("setSpamBot").checked,broadcast_auto_subscribe:$("setAutoSub").checked,save_outgoing:$("setSaveOutgoing").checked,info_message:$("setInfoMessage").checked,keep_local:$("setKeepLocal").checked}}
 $("saveSettings").onclick=()=>withButton($("saveSettings"),"Сохраняю…",async()=>{await api(url("/settings"),{method:"PATCH",body:JSON.stringify(settingsPayload())});toast("Настройки сохранены","success");await loadSettings()}).catch(e=>toast(e.message,"error"));$("reloadSettings").onclick=()=>loadSettings().catch(e=>toast(e.message,"error"));
 $("saveArchive").onclick=()=>withButton($("saveArchive"),"Сохраняю…",async()=>{const types=[];if($("mediaRound").checked)types.push("round_video");if($("mediaPhoto").checked)types.push("photo");if($("mediaVideo").checked)types.push("video");await api(url("/settings"),{method:"PATCH",body:JSON.stringify({paused:$("archivePaused").checked,save_outgoing:$("archiveOutgoing").checked,info_message:$("archiveInfo").checked,keep_local:$("archiveLocal").checked,archive_media_types:types,target_chat_id:Number($("archiveTarget").value||0)})});toast("Настройки архиватора сохранены","success");await loadDashboard()}).catch(e=>toast(e.message,"error"));
