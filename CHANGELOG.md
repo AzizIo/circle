@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.18 — Broadcast Start Diagnostics
+
+- Persist readable terminal reasons when a campaign task stops before its first wave or exits due to an account, source-post, destination, or Telegram wait condition.
+- Surface the engine's last error and the active-but-not-running recovery state in the Broadcast page instead of showing only “выключена”.
+- Added regression tests for the terminal-reason mapping and the panel's launch-state display.
+
+
 ## 3.9.17 — Preserve Multi-Page Recipient Selection
 
 - Allow recipient pagination to continue after local checkbox changes; selected IDs remain in the profile-local set while pages change.
