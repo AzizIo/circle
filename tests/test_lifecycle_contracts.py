@@ -47,8 +47,9 @@ def test_run_service_does_not_migrate_broadcast_policy_on_startup():
     assert "save_cfg(cfg)" not in body
 
 def test_autosub_worker_is_campaign_scoped_and_queue_capture_is_durable():
-    init = _block(SOURCE, "        # Link capture is session-level", "    def _apply_delays")
+    init = _block(SOURCE, "        # Both link capture and queue execution", "    def _apply_delays")
     assert "self._ensure_autosub_worker()" not in init
+    assert "client.add_event_handler" not in init
     assert "self.running = True" in _block(SOURCE, "    def _launch(self):", "    def start(self")
     launch = _block(SOURCE, "    def _launch(self):", "    def start(self")
     assert "self._ensure_autosub_worker()" in launch
@@ -56,18 +57,21 @@ def test_autosub_worker_is_campaign_scoped_and_queue_capture_is_durable():
     assert "self.autosub_queue.enqueue_many(accepted, chat_id, message_id)" in mention
     assert "if self.running and self.state.get(\"active\"):" in mention
     stop = _block(SOURCE, "    def stop(self):", "    def suspend(self):")
-    assert "worker.cancel()" in stop
+    assert "self._stop_autosub_worker()" in stop
     suspend = _block(SOURCE, "    def suspend(self):", "    def set_interval(self")
-    assert "worker.cancel()" in suspend
+    assert "self._stop_autosub_worker()" in suspend
+    stop_worker = _block(SOURCE, "    def _stop_autosub_worker(self):", "    def _ensure_autosub_worker")
+    assert "self._detach_autosub_listener()" in stop_worker
+    assert "worker.cancel()" in stop_worker
     finally_block = _block(SOURCE, "        finally:\n            await self.save_subs(force=True)", "    # ----- управление -----")
-    assert "worker.cancel()" in finally_block
+    assert "self._stop_autosub_worker()" in finally_block
     assert "await asyncio.gather(worker, return_exceptions=True)" in finally_block
 
 
 def test_telegram_bot_is_not_started_by_web_managed_runtime():
     body = _block(SOURCE, "    # Web panel is the only operator control plane.", "    if target_err:")
     assert "await bot.start" not in body
-    assert "bot_token" not in body
+    assert "TelegramClient(" not in body
 
 
 def test_independent_web_host_does_not_hold_telegram_session():
@@ -114,3 +118,18 @@ def test_web_managed_profile_does_not_auto_resume_broadcast():
     assert "allow_broadcast_autostart=True" in body
     assert "allow_broadcast_autostart=False" in _block(
         SOURCE, "    async def _run_profile(", "    async def stop_profile(")
+
+
+def test_autosub_listener_attaches_only_for_active_campaign():
+    attach = _block(SOURCE, "    def _attach_autosub_listener(self):", "    def _detach_autosub_listener")
+    assert "self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)" in attach
+    detach = _block(SOURCE, "    def _detach_autosub_listener(self):", "    def _stop_autosub_worker")
+    assert "self.client.remove_event_handler" in detach
+    ensure = _block(SOURCE, "    def _ensure_autosub_worker(", "    async def _autosub_worker_loop")
+    assert "not self.running or not self.state.get(\"active\")" in ensure
+    assert "self._attach_autosub_listener()" in ensure
+    mention = _block(SOURCE, "    async def _on_mention(self, event):", "    async def close(self):")
+    assert "not self.running or not self.state.get(\"active\")" in mention
+    web_source = (ROOT / "telegram_manager_web.py").read_text(encoding="utf-8")
+    settings = _block(web_source, "    async def settings(self, request):", "    def _archive_connection")
+    assert "bc._stop_autosub_worker()" in settings
