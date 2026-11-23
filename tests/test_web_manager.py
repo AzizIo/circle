@@ -487,6 +487,20 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('id="bcAccountSource"', web_module.INDEX_HTML)
         self.assertIn('id="bcStartFeedback"', web_module.INDEX_HTML)
 
+    def test_account_actions_expose_pending_and_accepted_states(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('withButton(b,"Запускаю…"', html)
+        self.assertIn('withButton(b,"Останавливаю…"', html)
+        self.assertIn('withButton($("createProfile"),"Создаю…"', html)
+        self.assertIn('withButton($("sendLoginCode"),"Отправляю…"', html)
+        self.assertIn('withButton($("submitLoginCode"),"Проверяю код…"', html)
+        self.assertIn('withButton($("submitLoginPassword"),"Проверяю 2FA…"', html)
+        self.assertIn("Авторизация завершена, но список профилей не обновлён", html)
+        self.assertIn("Запрос запуска профиля", html)
+        self.assertIn("Запрос остановки профиля", html)
+
     def test_broadcast_recipient_panel_collapse_and_action_feedback(self):
         import telegram_manager_web as web_module
 
