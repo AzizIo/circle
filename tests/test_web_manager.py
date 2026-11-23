@@ -155,6 +155,7 @@ class WebManagerTests(unittest.TestCase):
     def test_web_control_settings_recipients_and_explicit_broadcast(self):
         async def run():
             import json
+            import time
             with tempfile.TemporaryDirectory() as td:
                 config_path = Path(td) / "config.json"
                 cfg = {
@@ -185,6 +186,8 @@ class WebManagerTests(unittest.TestCase):
                         self.stopped = 0
                         self.interval_set = None
                         self.duration_set = None
+                        self._dialogs_scanned_at = time.time()
+                        self.chat_list_calls = []
                     def short(self):
                         return "работает" if self.running else "выключена"
                     async def preview(self):
@@ -192,6 +195,9 @@ class WebManagerTests(unittest.TestCase):
                     async def saved_posts(self, limit=10):
                         return []
                     async def chat_list(self, refresh=False):
+                        self.chat_list_calls.append(bool(refresh))
+                        if refresh:
+                            self._dialogs_scanned_at = time.time()
                         return [(101, "Approved Group"), (202, "Other Group")]
                     def chat_status(self, chat_id):
                         return "ok"
@@ -270,6 +276,7 @@ class WebManagerTests(unittest.TestCase):
                     )
                     self.assertEqual(started.status, 202)
                     self.assertEqual(bc.started, 1)
+                    self.assertEqual(bc.chat_list_calls, [False, False, False])
 
                     stopped = await client.post(
                         "/api/profiles/default/broadcast/stop", headers=headers, json={},
@@ -486,6 +493,20 @@ class WebManagerTests(unittest.TestCase):
         self.assertIn('localStorage.setItem("circles_active_profile",S.profile)', web_module.INDEX_HTML)
         self.assertIn('id="bcAccountSource"', web_module.INDEX_HTML)
         self.assertIn('id="bcStartFeedback"', web_module.INDEX_HTML)
+
+    def test_panel_hides_saved_access_token_and_explains_timeout_context(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn('id="changeToken"', html)
+        self.assertIn('function setTokenUi(hasAccess)', html)
+        self.assertIn('setTokenUi(true)', html)
+        self.assertIn('S.authToken', html)
+        self.assertNotIn('$("token").value=t', html)
+        self.assertIn('const timeoutMs=slowTelegramRequest?120000:30000', html)
+        self.assertIn('Запрос "+method+" "+path+" не завершился за "', html)
+        self.assertIn('Нет подтверждения от сервера. Проверь текущий статус кампании', html)
+        self.assertIn('Сохранённый список подтверждён для ', html)
 
     def test_account_actions_expose_pending_and_accepted_states(self):
         import telegram_manager_web as web_module
