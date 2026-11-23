@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.5"
+APP_VERSION = "3.9.6"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -401,7 +401,7 @@ class TelegramManagerRuntime:
         name = request.match_info["name"]
         _, cleaner = self._get_profile(name)
         cfg = self.configs[name]
-        stats = cleaner.catalog_stats()
+        stats = await asyncio.to_thread(cleaner.catalog_stats)
         bc = self.broadcasters.get(name)
         broadcast = self._broadcast_view(name, bc) if bc else None
         usage = shutil.disk_usage(self.data_dirs[name])
@@ -1059,7 +1059,8 @@ class TelegramManagerRuntime:
             peer_type = request.query.get("peer_type") or None
             if peer_type not in {None, "group", "channel"}:
                 raise ValueError("Неизвестный тип чата")
-            result = cleaner.list_catalog(
+            result = await asyncio.to_thread(
+                cleaner.list_catalog,
                 category=request.query.get("category") or None, query=request.query.get("query", ""),
                 peer_type=peer_type, include_protected=True,
                 limit=int(request.query.get("limit", 100)), offset=int(request.query.get("offset", 0)))
@@ -1069,7 +1070,8 @@ class TelegramManagerRuntime:
 
     async def summary(self, request):
         _, cleaner = self._get_profile(request.match_info["name"])
-        return web.json_response(cleaner.catalog_stats())
+        stats = await asyncio.to_thread(cleaner.catalog_stats)
+        return web.json_response(stats)
 
     async def leave_one(self, request):
         name = request.match_info["name"]
