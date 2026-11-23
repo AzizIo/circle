@@ -262,7 +262,7 @@ async function loadArchiveCatalog(){
  const profile=S.profile,page=S.archivePage,query=$("archivePeopleSearch").value,version=(S.latest.archive=(S.latest.archive||0)+1);
  const feedback=$("archiveCatalogFeedback"),list=$("archivePeople");
  const updateControls=loading=>{
-  if(S.latest.archive!==version)return;
+  if(S.profile!==profile||S.latest.archive!==version)return;
   $("refreshArchiveCatalog").disabled=!!loading;
   $("searchArchivePeople").disabled=!!loading;
   $("archivePeoplePrev").disabled=!!loading||S.archivePage===0;
@@ -297,7 +297,7 @@ async function loadArchiveCatalog(){
    toast(e.message,"error");
   }
  }finally{
-  if(S.latest.archive===version){list.setAttribute("aria-busy","false");updateControls(false)}
+  if(S.profile===profile&&S.latest.archive===version){list.setAttribute("aria-busy","false");updateControls(false)}
  }
 }
 async function loadArchivePersonMedia(triggerButton){
