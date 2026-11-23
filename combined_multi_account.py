@@ -2438,7 +2438,7 @@ class Broadcaster:
             self.autosub_queue.clear_pause()
         if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
                 or not self.running or not self.state.get("active")
-                or self._autosub_worker_stopping):
+                or self.stop_event.is_set() or self._autosub_worker_stopping):
             self._stop_autosub_worker()
             return None
         self._attach_autosub_listener()
@@ -2452,7 +2452,8 @@ class Broadcaster:
         """Drain the durable per-account queue; honor FloodWait and stop without losing jobs."""
         while not self._autosub_worker_stopping:
             if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
-                    or not self.running or not self.state.get("active")):
+                    or not self.running or not self.state.get("active")
+                    or self.stop_event.is_set()):
                 return
             pause_until, pause_reason = self.autosub_queue.pause_info()
             now = time.time()
@@ -2776,7 +2777,8 @@ class Broadcaster:
     async def _on_mention(self, event):
         try:
             if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
-                    or not self.running or not self.state.get("active")):
+                    or not self.running or not self.state.get("active")
+                    or self.stop_event.is_set()):
                 return
             message = getattr(event, "message", None)
             if (message is None or bool(getattr(event, "is_private", False))
