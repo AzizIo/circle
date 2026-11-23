@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.21"
+APP_VERSION = "3.9.23"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -519,6 +519,13 @@ class TelegramManagerRuntime:
         pending_not_selected = pending_ids.difference(current_allowlist)
         remaining_not_selected = pending_ids.difference(completed_ids).difference(current_allowlist)
         progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
+        has_pending_wave = isinstance(state.get("pending_wave"), dict)
+        try:
+            ends_at = float(state.get("end") or 0)
+        except (TypeError, ValueError, OverflowError):
+            ends_at = 0.0
+        resume_available = bool(has_pending_wave and state.get("active") is True
+                                and math.isfinite(ends_at) and ends_at > time.time())
         return {
             "profile": name,
             "is_primary": name == "default",
@@ -529,6 +536,8 @@ class TelegramManagerRuntime:
             "pending_completed_not_selected": len(pending_not_selected.intersection(completed_ids)),
             "running": bool(bc.running), "status": bc.short(),
             "active": bool(state.get("active")), "end": state.get("end", 0),
+            "has_pending_wave": has_pending_wave, "resume_available": resume_available,
+            "ends_at": ends_at,
             "next": state.get("next", 0), "interval": state.get("interval", 0),
             "wave": state.get("wave", 0), "run_ok": state.get("run_ok", 0),
             "run_fail": state.get("run_fail", 0), "life_ok": state.get("life_ok", 0),
@@ -1104,13 +1113,12 @@ class TelegramManagerRuntime:
         elif raw_allowlist not in (None, ""):
             malformed_count = 1
 
+        # This endpoint is polled by the panel. It must be read-only: a transient or
+        # incomplete Telegram dialog snapshot must never rewrite the user's explicit
+        # allowlist or damage a separately persisted in-flight broadcast checkpoint.
         selected_ids = sorted(parsed_allowlist.intersection(live_ids))
         selected_id_set = set(selected_ids)
         removed_stale_count = len(parsed_allowlist.difference(live_ids)) + malformed_count
-        normalized_allowlist = selected_ids
-        if raw_allowlist != normalized_allowlist:
-            cfg["broadcast_allowlist"] = normalized_allowlist
-            self._save_config(cfg)
 
         items = []
         for cid, title in chats[offset:offset + limit]:
@@ -1228,6 +1236,73 @@ class TelegramManagerRuntime:
             payload = await request.json()
             if not isinstance(payload, dict) or payload.get("confirmed") is not True:
                 raise ValueError("Нужно подтвердить запуск в панели управления")
+
+            # A pending wave is an immutable recovery checkpoint. Resume exactly that
+            # saved post + recipient snapshot; do not compare it with the editable
+            # allowlist, which can legitimately change while the wave is paused.
+            state = getattr(bc, "state", {})
+            pending = state.get("pending_wave") if isinstance(state, dict) else None
+            if isinstance(pending, dict):
+                if payload.get("resume_saved") is not True:
+                    raise ValueError(
+                        "Есть незавершённая сохранённая волна. Обнови панель и выбери "
+                        "«Продолжить сохранённую очередь»; текущий список получателей её не заменяет."
+                    )
+                if state.get("active") is not True:
+                    raise ValueError("Сохранённая очередь не активна. Она сохранена без изменений.")
+                try:
+                    ends_at = float(state.get("end") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    ends_at = 0.0
+                if not math.isfinite(ends_at) or ends_at <= time.time():
+                    raise ValueError(
+                        "Срок кампании истёк. Сохранённая очередь оставлена на диске; "
+                        "она не будет автоматически заменена новой кампанией."
+                    )
+                raw_pending_ids = pending.get("chat_ids", [])
+                if not isinstance(raw_pending_ids, list):
+                    raise ValueError("Checkpoint сохранённой волны повреждён: нет списка чатов.")
+                pending_ids = set()
+                for raw_id in raw_pending_ids:
+                    if isinstance(raw_id, bool):
+                        continue
+                    try:
+                        chat_id = int(raw_id)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if chat_id:
+                        pending_ids.add(chat_id)
+                if not pending_ids:
+                    raise ValueError("В сохранённой волне нет корректных ID чатов. Очередь не изменена.")
+                completed_ids = set()
+                raw_completed_ids = pending.get("completed_ids", [])
+                if isinstance(raw_completed_ids, list):
+                    for raw_id in raw_completed_ids:
+                        if isinstance(raw_id, bool):
+                            continue
+                        try:
+                            completed_ids.add(int(raw_id))
+                        except (TypeError, ValueError, OverflowError):
+                            continue
+                completed_ids.intersection_update(pending_ids)
+                try:
+                    post_id = int(pending.get("post_id") or 0)
+                except (TypeError, ValueError, OverflowError):
+                    post_id = 0
+                if post_id <= 0:
+                    raise ValueError("В сохранённой волне не указан исходный пост. Очередь не изменена.")
+                resume = getattr(bc, "resume", None)
+                if not callable(resume) or not resume():
+                    raise ValueError("Не удалось возобновить сохранённую волну. Проверь статус аккаунта.")
+                return web.json_response({
+                    "ok": True, "resumed": True, "message": "Сохранённая очередь продолжена",
+                    "selected_count": len(pending_ids),
+                    "already_completed": len(completed_ids),
+                    "remaining_count": len(pending_ids.difference(completed_ids)),
+                }, status=202)
+            if payload.get("resume_saved") is True:
+                raise ValueError("Нет незавершённой сохранённой волны для продолжения.")
+
             if not cfg.get("broadcast_allowlist_only"):
                 raise ValueError("Сначала выбери и сохрани конкретных получателей")
             raw_requested = payload.get("recipient_ids")
@@ -1270,30 +1345,6 @@ class TelegramManagerRuntime:
                 cfg["broadcast_allowlist"] = selected_ids
                 cfg["broadcast_allowlist_only"] = True
                 self._save_config(cfg)
-            pending = bc.state.get("pending_wave") if isinstance(bc.state.get("pending_wave"), dict) else None
-            if bc.state.get("active") and pending:
-                pending_ids = set()
-                for raw_id in pending.get("chat_ids", []):
-                    try:
-                        pending_ids.add(int(raw_id))
-                    except (TypeError, ValueError, OverflowError):
-                        continue
-                completed_ids = set()
-                for raw_id in pending.get("completed_ids", []):
-                    try:
-                        completed_ids.add(int(raw_id))
-                    except (TypeError, ValueError, OverflowError):
-                        continue
-                missing_ids = pending_ids.difference(selected_ids)
-                if missing_ids:
-                    missing_remaining = missing_ids.difference(completed_ids)
-                    raise ValueError(
-                        "Нельзя продолжить старую очередь: "
-                        f"{len(missing_ids)} ID из исходных {len(pending_ids)} отсутствуют в текущем списке "
-                        f"(уже обработано: {len(missing_ids.intersection(completed_ids))}; "
-                        f"ещё ожидали обработки: {len(missing_remaining)}). "
-                        "Очередь сохранена без изменений. Сверь текущий список получателей с исходной очередью."
-                    )
             ok = bc.start(cfg.get("broadcast_interval_min", 60), cfg.get("broadcast_hours", 12))
             if not ok:
                 raise ValueError("Не удалось запустить кампанию. Проверь её текущее состояние")
