@@ -1,5 +1,11 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.6 — Smart Cleaner Catalog Performance
+
+- Added sort/filter indexes for the Smart Cleaner catalog and query-plan regression tests.
+- Moved catalog list and summary reads to isolated read-only SQLite connections and worker threads so catalog queries do not block Telegram/web event processing.
+
+
 ## 3.9.5 — Non-blocking Archive Queries
 
 - Moved archive summary, people catalog, and media-page SQLite reads into worker threads so large databases do not block the aiohttp event loop.
