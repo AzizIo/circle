@@ -453,7 +453,9 @@ class TelegramManagerRuntime:
                     "name": name, "label": cfg.get("account_label") or name,
                     "status": status, "active": connected, "running": running,
                     "has_session": has_session, "auth_stage": auth_stage,
-                    "can_authorize": bool(self.account_manager and not running and not connected),
+                    "can_authorize": bool(self.account_manager and not running and not connected
+                                          and (not has_session or auth_stage is not None
+                                               or "повторная авторизация" in status.lower())),
                     "can_start": bool(self.account_manager and not running and not connected and has_session),
                     "can_stop": bool(self.account_manager and running),
                 })
@@ -482,7 +484,7 @@ class TelegramManagerRuntime:
             raise web.HTTPBadRequest(text=str(exc))
         except OSError as exc:
             log.exception("Не удалось создать профиль Telegram")
-            raise web.HTTPInsufficientStorage(text=f"Не удалось сохранить профиль: {type(exc).__name__}")
+            raise web.HTTPInternalServerError(text=f"Не удалось сохранить профиль: {type(exc).__name__}")
 
     @staticmethod
     async def _json_payload(request, *, expected: str) -> dict:
