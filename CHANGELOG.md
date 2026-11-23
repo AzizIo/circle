@@ -1,5 +1,14 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.8 — Account-Scoped Broadcast Workspace & Feedback
+
+- Persisted the selected Telegram profile across page reloads so the panel does not silently switch back to the first account.
+- Added explicit active-profile and Telegram account identity labels to the recipient workspace and broadcast status.
+- Kept recipient discovery and validation scoped to the selected profile; cross-profile chat IDs are rejected.
+- Added visible pending/error/cancel states to the launch button, including clear feedback for an incorrect confirmation.
+- Reused a profile-local dialog scan for up to 45 seconds after recipient validation to avoid scanning the same account twice during one launch flow.
+
+
 ## 3.9.7 — Scan, Archive Payload & Runtime Monitoring
 
 - Added compact catalog and archive responses for the panel while preserving full legacy API payloads by default.
