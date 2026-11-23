@@ -95,7 +95,7 @@ CONFIG_PATH = Path(os.getenv("CIRCLES_CONFIG", str(BASE / "config.json")))
 DEFAULT_CONFIG_PATH = CONFIG_PATH
 ACCOUNTS_DIR = BASE / "accounts"
 SERVICE = "circles-archiver"
-APP_VERSION = "3.9.6"
+APP_VERSION = "3.9.26"
 AUTOSUB_OWNER_PAUSE_REASON = "приостановлена владельцем"
 
 
