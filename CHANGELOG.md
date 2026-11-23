@@ -1,5 +1,13 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.7 — Scan, Archive Payload & Runtime Monitoring
+
+- Added compact catalog and archive responses for the panel while preserving full legacy API payloads by default.
+- Reused unchanged Telegram descriptions and recent-message samples for up to seven days during repeat scans to avoid duplicate enrichment requests.
+- Exposed live scan counters and elapsed time so long scans show visible progress in the panel.
+- Added host CPU/RAM, process RSS, SQLite database/WAL sizes, and rolling 60-second API latency (average/p95/error count) monitoring.
+
+
 ## 3.9.6 — Smart Cleaner Catalog Performance
 
 - Added sort/filter indexes for the Smart Cleaner catalog and query-plan regression tests.
