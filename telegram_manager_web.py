@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.4"
+APP_VERSION = "3.9.5"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -486,43 +486,81 @@ class TelegramManagerRuntime:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _archive_summary_sync(self, name: str) -> dict:
+        conn = self._archive_connection(name)
+        try:
+            topics = int(conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0])
+            total, sent, last = conn.execute(
+                "SELECT COUNT(*), COALESCE(SUM(sent=1),0), MAX(date_utc) FROM circles"
+            ).fetchone()
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
+            media_col = "media_type" if "media_type" in columns else "'round_video'"
+            by_type = {str(row[0]): int(row[1]) for row in conn.execute(
+                f"SELECT COALESCE({media_col},'round_video'), COUNT(*) FROM circles GROUP BY 1"
+            ).fetchall()}
+            backfill = {}
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backfill_state'").fetchone():
+                backfill = {
+                    str(row[0]): {"scanned": int(row[1] or 0), "archived": int(row[2] or 0),
+                                  "completed_chats": int(row[3] or 0), "chats": int(row[4] or 0)}
+                    for row in conn.execute(
+                        """SELECT CASE
+                            WHEN media_type='photo' OR media_type LIKE 'photo:%' THEN 'photo'
+                            WHEN media_type='video' OR media_type LIKE 'video:%' THEN 'video'
+                            ELSE media_type END,
+                            SUM(scanned), SUM(archived), SUM(completed=1), COUNT(*)
+                            FROM backfill_state GROUP BY 1"""
+                    ).fetchall()
+                }
+            return {
+                "topics": topics, "total": int(total or 0), "sent": int(sent or 0),
+                "pending": int((total or 0) - (sent or 0)), "last": last,
+                "by_type": by_type, "backfill": backfill,
+            }
+        finally:
+            conn.close()
+
     async def archive_summary(self, request):
         name = request.match_info["name"]
         try:
-            conn = self._archive_connection(name)
-            try:
-                topics = int(conn.execute("SELECT COUNT(*) FROM topics").fetchone()[0])
-                total, sent, last = conn.execute(
-                    "SELECT COUNT(*), COALESCE(SUM(sent=1),0), MAX(date_utc) FROM circles"
-                ).fetchone()
-                columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
-                media_col = "media_type" if "media_type" in columns else "'round_video'"
-                by_type = {str(row[0]): int(row[1]) for row in conn.execute(
-                    f"SELECT COALESCE({media_col},'round_video'), COUNT(*) FROM circles GROUP BY 1"
-                ).fetchall()}
-                backfill = {}
-                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backfill_state'").fetchone():
-                    backfill = {
-                        str(row[0]): {"scanned": int(row[1] or 0), "archived": int(row[2] or 0),
-                                      "completed_chats": int(row[3] or 0), "chats": int(row[4] or 0)}
-                        for row in conn.execute(
-                            """SELECT CASE
-                                WHEN media_type='photo' OR media_type LIKE 'photo:%' THEN 'photo'
-                                WHEN media_type='video' OR media_type LIKE 'video:%' THEN 'video'
-                                ELSE media_type END,
-                                SUM(scanned), SUM(archived), SUM(completed=1), COUNT(*)
-                                FROM backfill_state GROUP BY 1"""
-                        ).fetchall()
-                    }
-                return web.json_response({
-                    "topics": topics, "total": int(total or 0), "sent": int(sent or 0),
-                    "pending": int((total or 0) - (sent or 0)), "last": last,
-                    "by_type": by_type, "backfill": backfill,
-                })
-            finally:
-                conn.close()
+            result = await asyncio.to_thread(self._archive_summary_sync, name)
+            return web.json_response(result)
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"База архива недоступна: {type(exc).__name__}")
+
+    def _archive_people_sync(self, name: str, query: str, limit: int, offset: int) -> dict:
+        conn = self._archive_connection(name)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
+            join = "c.topic_id=t.topic_id" if "topic_id" in columns else "c.user_id=t.user_id"
+            where = ""
+            params: list[Any] = []
+            if query:
+                where = "WHERE (t.title LIKE ? OR CAST(t.user_id AS TEXT) LIKE ?)"
+                params = [f"%{query}%", f"%{query}%"]
+            total = int(conn.execute(
+                f"SELECT COUNT(*) FROM topics t {where}", params
+            ).fetchone()[0])
+            rows = conn.execute(
+                f"""SELECT t.user_id,t.title,t.topic_id,
+                    COUNT(c.msg_id) AS media_count,
+                    COALESCE(SUM(CASE WHEN c.sent=1 THEN 1 ELSE 0 END),0) AS sent_count,
+                    COALESCE(SUM(CASE WHEN c.sent=0 THEN 1 ELSE 0 END),0) AS pending_count,
+                    MAX(c.date_utc) AS last_media,
+                    MIN(c.date_utc) AS first_media,
+                    COALESCE(SUM(c.duration),0) AS total_duration
+                    FROM topics t LEFT JOIN circles c ON {join}
+                    {where}
+                    GROUP BY t.user_id,t.title,t.topic_id
+                    ORDER BY MAX(c.date_utc) DESC,t.title COLLATE NOCASE
+                    LIMIT ? OFFSET ?""", [*params, limit, offset]
+            ).fetchall()
+            return {
+                "total": total, "limit": limit, "offset": offset,
+                "items": [dict(row) for row in rows],
+            }
+        finally:
+            conn.close()
 
     async def archive_people(self, request):
         name = request.match_info["name"]
@@ -533,40 +571,44 @@ class TelegramManagerRuntime:
             raise web.HTTPBadRequest(text="Некорректная пагинация")
         query = request.query.get("query", "").strip()[:120]
         try:
-            conn = self._archive_connection(name)
-            try:
-                columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
-                join = "c.topic_id=t.topic_id" if "topic_id" in columns else "c.user_id=t.user_id"
-                where = ""
-                params: list[Any] = []
-                if query:
-                    where = "WHERE (t.title LIKE ? OR CAST(t.user_id AS TEXT) LIKE ?)"
-                    params = [f"%{query}%", f"%{query}%"]
-                total = int(conn.execute(
-                    f"SELECT COUNT(*) FROM topics t {where}", params
-                ).fetchone()[0])
-                rows = conn.execute(
-                    f"""SELECT t.user_id,t.title,t.topic_id,
-                        COUNT(c.msg_id) AS media_count,
-                        COALESCE(SUM(CASE WHEN c.sent=1 THEN 1 ELSE 0 END),0) AS sent_count,
-                        COALESCE(SUM(CASE WHEN c.sent=0 THEN 1 ELSE 0 END),0) AS pending_count,
-                        MAX(c.date_utc) AS last_media,
-                        MIN(c.date_utc) AS first_media,
-                        COALESCE(SUM(c.duration),0) AS total_duration
-                        FROM topics t LEFT JOIN circles c ON {join}
-                        {where}
-                        GROUP BY t.user_id,t.title,t.topic_id
-                        ORDER BY MAX(c.date_utc) DESC,t.title COLLATE NOCASE
-                        LIMIT ? OFFSET ?""", [*params, limit, offset]
-                ).fetchall()
-                return web.json_response({
-                    "total": total, "limit": limit, "offset": offset,
-                    "items": [dict(row) for row in rows],
-                })
-            finally:
-                conn.close()
+            result = await asyncio.to_thread(
+                self._archive_people_sync, name, query, limit, offset
+            )
+            return web.json_response(result)
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"Каталог архива недоступен: {type(exc).__name__}")
+
+    def _archive_person_media_sync(self, name: str, user_id: int, limit: int, offset: int) -> dict:
+        conn = self._archive_connection(name)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
+            media_col = "c.media_type" if "media_type" in columns else "'round_video'"
+            mime_col = "c.mime_type" if "mime_type" in columns else "''"
+            size_col = "c.file_size" if "file_size" in columns else "0"
+            rows = conn.execute(
+                f"""SELECT c.msg_id,c.date_utc,c.duration,c.outgoing,c.sent,c.attempts,
+                    {media_col} AS media_type,{mime_col} AS mime_type,{size_col} AS file_size,
+                    c.file_path
+                    FROM circles c WHERE c.user_id=?
+                    ORDER BY c.date_utc DESC,c.msg_id DESC LIMIT ? OFFSET ?""",
+                (user_id, limit, offset)
+            ).fetchall()
+            total = int(conn.execute(
+                "SELECT COUNT(*) FROM circles WHERE user_id=?", (user_id,)
+            ).fetchone()[0])
+            items = []
+            for row in rows:
+                item = dict(row)
+                raw_path = str(item.pop("file_path") or "")
+                item["file_name"] = Path(raw_path).name if raw_path else ""
+                item["file_available"] = bool(raw_path and Path(raw_path).is_file())
+                item["outgoing"] = bool(item["outgoing"])
+                item["sent"] = bool(item["sent"])
+                items.append(item)
+            return {"user_id": user_id, "total": total, "limit": limit,
+                    "offset": offset, "items": items}
+        finally:
+            conn.close()
 
     async def archive_person_media(self, request):
         name = request.match_info["name"]
@@ -577,36 +619,10 @@ class TelegramManagerRuntime:
         except ValueError:
             raise web.HTTPBadRequest(text="Некорректный ID или пагинация")
         try:
-            conn = self._archive_connection(name)
-            try:
-                columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
-                media_col = "c.media_type" if "media_type" in columns else "'round_video'"
-                mime_col = "c.mime_type" if "mime_type" in columns else "''"
-                size_col = "c.file_size" if "file_size" in columns else "0"
-                rows = conn.execute(
-                    f"""SELECT c.msg_id,c.date_utc,c.duration,c.outgoing,c.sent,c.attempts,
-                        {media_col} AS media_type,{mime_col} AS mime_type,{size_col} AS file_size,
-                        c.file_path
-                        FROM circles c WHERE c.user_id=?
-                        ORDER BY c.date_utc DESC,c.msg_id DESC LIMIT ? OFFSET ?""",
-                    (user_id, limit, offset)
-                ).fetchall()
-                total = int(conn.execute(
-                    "SELECT COUNT(*) FROM circles WHERE user_id=?", (user_id,)
-                ).fetchone()[0])
-                items = []
-                for row in rows:
-                    item = dict(row)
-                    raw_path = str(item.pop("file_path") or "")
-                    item["file_name"] = Path(raw_path).name if raw_path else ""
-                    item["file_available"] = bool(raw_path and Path(raw_path).is_file())
-                    item["outgoing"] = bool(item["outgoing"])
-                    item["sent"] = bool(item["sent"])
-                    items.append(item)
-                return web.json_response({"user_id": user_id, "total": total,
-                                          "limit": limit, "offset": offset, "items": items})
-            finally:
-                conn.close()
+            result = await asyncio.to_thread(
+                self._archive_person_media_sync, name, user_id, limit, offset
+            )
+            return web.json_response(result)
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"Записи медиа недоступны: {type(exc).__name__}")
 
