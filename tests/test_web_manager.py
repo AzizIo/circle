@@ -504,6 +504,111 @@ class WebManagerTests(unittest.TestCase):
         self.assertLess(html.index("<body>"), html.index('<div class="app">'))
         self.assertIn("</body></html>", html)
 
+    def test_broadcast_status_does_not_call_telegram_preview(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                class FakeBroadcaster:
+                    def __init__(self):
+                        self.state = {
+                            "active": False, "end": 0, "next": 0, "interval": 60,
+                            "wave": 0, "run_ok": 0, "run_fail": 0, "life_ok": 12,
+                            "life_fail": 2, "life_waves": 3, "last_error": "",
+                            "pending_wave": None, "history": [], "post_id": 456,
+                        }
+                        self.running = False
+                        self.preview_calls = 0
+                        self.progress = (0, 0)
+                    def short(self):
+                        return "выключена"
+                    async def preview(self):
+                        self.preview_calls += 1
+                        raise AssertionError("status must not call Telegram preview")
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, Path(td))
+                bc = FakeBroadcaster()
+                runtime.register_broadcaster("default", bc)
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/broadcast", runtime.broadcast_status)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    response = await client.get(
+                        "/api/profiles/default/broadcast",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["life_ok"], 12)
+                    self.assertEqual(data["post"]["id"], 456)
+                    self.assertFalse(data["post"]["preview_available"])
+                    self.assertEqual(bc.preview_calls, 0)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_selected_broadcast_post_is_cached_for_status(self):
+        async def run():
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                class FakeBroadcaster:
+                    state = {"post_id": 456, "active": False, "pending_wave": None,
+                             "history": [], "life_ok": 0, "life_fail": 0, "life_waves": 0}
+                    running = False
+                    progress = (0, 0)
+                    def short(self):
+                        return "выключена"
+                    async def select_post(self, post_id):
+                        return {"id": post_id, "text": "Cached text", "media": True, "pinned": True}
+                    async def preview(self):
+                        raise AssertionError("status must use cached preview")
+
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, Path(td))
+                runtime.register_broadcaster("default", FakeBroadcaster())
+                app = web.Application(middlewares=[runtime.auth_middleware])
+                app.router.add_post("/api/profiles/{name}/broadcast/post", runtime.select_broadcast_post)
+                app.router.add_get("/api/profiles/{name}/broadcast", runtime.broadcast_status)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                headers = {"Authorization": "Bearer unit-test-token"}
+                try:
+                    selected = await client.post(
+                        "/api/profiles/default/broadcast/post", headers=headers,
+                        json={"post_id": 456},
+                    )
+                    self.assertEqual(selected.status, 200)
+                    status = await client.get("/api/profiles/default/broadcast", headers=headers)
+                    data = await status.json()
+                    self.assertEqual(data["post"]["text"], "Cached text")
+                    self.assertTrue(data["post"]["preview_available"])
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
+    def test_recipient_counter_updates_are_null_safe_and_save_result_is_truthful(self):
+        import telegram_manager_web as web_module
+
+        html = web_module.INDEX_HTML
+        self.assertIn("function safeText(id,value)", html)
+        self.assertIn('safeText("recipientSelectionHint",summary)', html)
+        self.assertIn("let savedOnServer=false", html)
+        self.assertIn("Список сохранён на сервере, но интерфейс не обновился:", html)
+        self.assertIn('S.recipientAccountLabel=r.account_label||S.profile', html)
+
     def test_panel_hides_saved_access_token_and_explains_timeout_context(self):
         import telegram_manager_web as web_module
 
