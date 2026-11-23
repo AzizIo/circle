@@ -1,5 +1,12 @@
 # CIRCLES CONTROL — Changelog
 
+## 3.9.10 — Account Action Feedback
+
+- Added in-progress button states and explicit server-response feedback for account start/stop, profile refresh/creation, and Telegram login steps.
+- Separated successful account/login actions from subsequent status-refresh failures so the UI does not report an accepted action as failed.
+- Kept the recipient-panel collapse and action-feedback improvements from 3.9.9.
+
+
 ## 3.9.9 — Clearer Actions & Collapsible Recipient List
 
 - Added a per-profile collapsible recipient panel with a chevron control; collapsed state persists across reloads and profile switches.
