@@ -3960,7 +3960,7 @@ class AccountManager:
         try:
             cfg = read_profile_config(self._profile_config_path(name))
             ddir = data_dir(cfg)
-            problems = [p for p in cfg_problems(cfg) if p != "не задан ID группы-форума"]
+            problems = account_cfg_problems(cfg)
             if problems:
                 return "error", "Сначала исправь настройки основного профиля: " + "; ".join(problems)
             client = make_client(cfg, ddir)
