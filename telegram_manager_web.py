@@ -422,9 +422,9 @@ class TelegramManagerRuntime:
                 items.append({
                     "name": name, "label": cfg.get("account_label") or name,
                     "status": status, "active": connected, "running": running,
-                    "can_start": bool(self.account_manager and name != "default" and not running and not connected
+                    "can_start": bool(self.account_manager and not running and not connected
                                       and self.account_manager.has_session(name)),
-                    "can_stop": bool(self.account_manager and name != "default" and running),
+                    "can_stop": bool(self.account_manager and running),
                 })
         else:
             items = [{"name": n, "label": self.configs[n].get("account_label") or n,
@@ -612,10 +612,11 @@ class TelegramManagerRuntime:
                     bc.set_interval(cfg["broadcast_interval_min"])
                 if "broadcast_hours" in changed and bc.running:
                     bc.set_duration(cfg["broadcast_hours"])
-                if "broadcast_auto_subscribe" in changed and cfg["broadcast_auto_subscribe"]:
-                    bc._ensure_autosub_worker()
-                if "broadcast_auto_subscribe" in changed and not cfg["broadcast_auto_subscribe"]:
-                    bc._autosub_wakeup.set()
+                if "broadcast_auto_subscribe" in changed:
+                    if cfg["broadcast_auto_subscribe"] and bc.running:
+                        bc._ensure_autosub_worker()
+                    else:
+                        bc._stop_autosub_worker()
             return web.json_response({"ok": True, "settings": self._safe_config(cfg)})
         except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))

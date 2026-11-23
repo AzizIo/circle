@@ -191,12 +191,12 @@ DEFAULTS = {
     "data_dir": "data",
     "session_name": "circles",
     "ignore_users": [],      # id людей, чьи медиа не сохраняем
-    "bot_token": "",         # токен бота-панели от @BotFather (необязательно)
-    "paused": False,         # пауза архивации (переключается кнопкой в боте)
+    "bot_token": "",         # legacy config field; web control does not require a Telegram bot
+    "paused": False,         # пауза архивации (переключается в веб-панели)
     "broadcast_interval_min": 60,   # рассылка: пауза между кругами, минут
     "broadcast_hours": 12,          # рассылка: сколько часов работать после старта
     "broadcast_autostart": False,   # запускать рассылку вместе с сервисом
-    "broadcast_auto_subscribe": True,  # фоновая обработка ссылок от ботов независимо от состояния рассылки
+    "broadcast_auto_subscribe": True,  # link capture and queue execution only while a campaign is active
     "broadcast_auto_subscribe_user_set": False,  # сохранить явный выбор владельца
     "broadcast_auto_subscribe_gap_seconds": 90,  # пауза между успешными действиями автоподписки
     "broadcast_auto_subscribe_daily_limit": 15,   # консервативный rolling limit для вступлений за 24 часа
@@ -204,7 +204,7 @@ DEFAULTS = {
     "broadcast_auto_subscribe_batch_size": 5,  # успешных действий до плановой паузы
     "broadcast_auto_subscribe_batch_pause_minutes": 30,  # плановый отдых между пакетами
     "broadcast_spambot": False,     # писать @SpamBot при спам-блоке
-    "broadcast_exclude": [],        # id групп, куда рассылка НЕ идёт (переключается в боте)
+    "broadcast_exclude": [],        # id групп, куда рассылка НЕ идёт (переключается в веб-панели)
     "broadcast_allowlist_only": False,
     "broadcast_allowlist": [],      # legacy compatibility; not used in all-groups mode
     "broadcast_notify_waves": True, # присылать отчёт после каждой волны
@@ -322,7 +322,7 @@ def add_account_profile(name: str) -> Path:
         "account_label": name,
         "session_name": "circles",
         "data_dir": str(Path("accounts") / name / "data"),
-        "bot_token": "",             # each profile needs its own bot token, if a panel is desired
+        "bot_token": "",             # legacy compatibility; web panel requires no Telegram bot token
         "ignore_users": [],
         "archive_media_types": ["round_video"],
         "broadcast_exclude": [],
@@ -386,6 +386,12 @@ def cfg_problems(cfg: dict) -> list[str]:
     if not re.fullmatch(r"-100\d+", str(cfg.get("target_chat_id") or "")):
         bad.append("ID группы-форума должен быть в формате -100...")
     return bad
+
+
+def account_cfg_problems(cfg: dict) -> list[str]:
+    """Validate Telegram connectivity; the archive destination is optional for broadcasts."""
+    return [problem for problem in cfg_problems(cfg)
+            if not problem.startswith("ID группы-форума")]
 
 
 def setup_logging(ddir: Path, console: bool = True) -> None:
@@ -1496,20 +1502,18 @@ class Broadcaster:
         self._consec_spam = 0
         self._scan_task = None         # идущее сейчас сканирование диалогов (чтобы не запускать два одновременно)
         self._apply_delays()
-        # Auto-subscription is a session-level background listener. It remains
-        # active during campaign pauses and when no broadcast campaign is running.
-        # The owner can toggle it live through cfg without reconnecting the client.
+        # Both link capture and queue execution are campaign-scoped. The durable
+        # SQLite queue remains on disk while a campaign is stopped.
         self._subscribe_tasks: set[asyncio.Task] = set()  # legacy batch tasks; retained for graceful migration
         self._autosub_worker_task: asyncio.Task | None = None
         self._autosub_wakeup = asyncio.Event()
         self._autosub_worker_stopping = False
-        if self.enabled:
-            client.add_event_handler(self._on_mention, events.NewMessage(incoming=True))
-            # Some bots edit the same requirement message to add/fix invite buttons.
-            client.add_event_handler(self._on_mention, events.MessageEdited(incoming=True))
+        self._autosub_listener_attached = False
+        self._autosub_new_message_event = events.NewMessage(incoming=True)
+        self._autosub_message_edited_event = events.MessageEdited(incoming=True)
 
     def _apply_delays(self):
-        """Паузы берём из config.json (меняются в боте, действуют со следующей волны)."""
+        """Паузы берём из config.json (меняются в веб-панели, действуют со следующей волны)."""
         try:
             lo = max(0.0, float(self.cfg.get("broadcast_delay_min", 0.6)))
             hi = max(lo, float(self.cfg.get("broadcast_delay_max", 1.2)))
@@ -1762,7 +1766,7 @@ class Broadcaster:
 
     # ----- диалоги и чаты -----
     async def _scan_dialogs(self):
-        """Один проход по диалогам. Параллельные вызовы (волна + кнопка в боте) делят один проход."""
+        """Один проход по диалогам. Параллельные вызовы (волна + кнопка в веб-панели) делят один проход."""
         if self._scan_task is None or self._scan_task.done():
             self._scan_task = asyncio.ensure_future(self._scan_dialogs_impl())
         return await asyncio.shield(self._scan_task)
@@ -2394,17 +2398,50 @@ class Broadcaster:
     async def subscribe(self, channels: list, _flood_retry: int = 0):
         """Compatibility entry point: persist actions and let the per-account worker process them."""
         inserted, duplicates = self.autosub_queue.enqueue_many(channels)
-        if inserted:
+        if inserted and self.running and self.state.get("active"):
             self._autosub_wakeup.set()
             self._ensure_autosub_worker()
         return {"inserted": inserted, "duplicates": duplicates}
+
+    def _attach_autosub_listener(self) -> None:
+        if self._autosub_listener_attached or not self.enabled:
+            return
+        try:
+            self.client.add_event_handler(self._on_mention, self._autosub_new_message_event)
+            self._autosub_listener_attached = True
+            # Some bots edit the same requirement message to add/fix invite buttons.
+            self.client.add_event_handler(self._on_mention, self._autosub_message_edited_event)
+        except Exception:
+            self._detach_autosub_listener()
+            blog.exception("Не удалось включить сбор ссылок автоподписки")
+
+    def _detach_autosub_listener(self) -> None:
+        if not self._autosub_listener_attached:
+            return
+        try:
+            self.client.remove_event_handler(self._on_mention, self._autosub_new_message_event)
+            self.client.remove_event_handler(self._on_mention, self._autosub_message_edited_event)
+        except Exception:
+            blog.exception("Не удалось отключить слушатель автоподписки")
+        finally:
+            self._autosub_listener_attached = False
+
+    def _stop_autosub_worker(self) -> None:
+        self._detach_autosub_listener()
+        self._autosub_wakeup.set()
+        worker = self._autosub_worker_task
+        if worker and not worker.done():
+            worker.cancel()
 
     def _ensure_autosub_worker(self, *, manual_resume: bool = False):
         if manual_resume:
             self.autosub_queue.clear_pause()
         if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
-                or self._autosub_worker_stopping):
+                or not self.running or not self.state.get("active")
+                or self.stop_event.is_set() or self._autosub_worker_stopping):
+            self._stop_autosub_worker()
             return None
+        self._attach_autosub_listener()
         if self._autosub_worker_task is None or self._autosub_worker_task.done():
             self._autosub_worker_task = asyncio.create_task(
                 self._autosub_worker_loop(), name=f"autosub-worker:{self.ddir.name}")
@@ -2414,7 +2451,9 @@ class Broadcaster:
     async def _autosub_worker_loop(self):
         """Drain the durable per-account queue; honor FloodWait and stop without losing jobs."""
         while not self._autosub_worker_stopping:
-            if not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True):
+            if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
+                    or not self.running or not self.state.get("active")
+                    or self.stop_event.is_set()):
                 return
             pause_until, pause_reason = self.autosub_queue.pause_info()
             now = time.time()
@@ -2737,7 +2776,9 @@ class Broadcaster:
 
     async def _on_mention(self, event):
         try:
-            if not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True):
+            if (not self.enabled or not self.cfg.get("broadcast_auto_subscribe", True)
+                    or not self.running or not self.state.get("active")
+                    or self.stop_event.is_set()):
                 return
             message = getattr(event, "message", None)
             if (message is None or bool(getattr(event, "is_private", False))
@@ -2807,8 +2848,9 @@ class Broadcaster:
             # Always ensure/wake the worker after a successful DB enqueue call.
             # This also recovers a worker that exited while the queue already
             # contained the same durable action.
-            self._ensure_autosub_worker()
-            self._autosub_wakeup.set()
+            if self.running and self.state.get("active"):
+                self._ensure_autosub_worker()
+                self._autosub_wakeup.set()
             if not is_new_event:
                 blog.debug("Повторное событие упоминания: SQLite-дедупликация сохранена")
         except Exception:  # noqa: BLE001
@@ -2817,6 +2859,7 @@ class Broadcaster:
     async def close(self):
         """Finish/stop background work before its Telegram client is disconnected."""
         self._autosub_worker_stopping = True
+        self._stop_autosub_worker()
         if self._autosub_worker_task and not self._autosub_worker_task.done():
             self._autosub_worker_task.cancel()
             await asyncio.gather(self._autosub_worker_task, return_exceptions=True)
@@ -3457,6 +3500,13 @@ class Broadcaster:
         finally:
             await self.save_subs(force=True)
             self.running = False
+            # Stop link-action execution as soon as a campaign ends. Queue rows
+            # remain durable and are resumed only by the next explicit campaign.
+            self._stop_autosub_worker()
+            worker = self._autosub_worker_task
+            if worker and not worker.done():
+                await asyncio.gather(worker, return_exceptions=True)
+            self._autosub_worker_task = None
             if not self.suspending:
                 terminal_detail = self.terminal_reason_message(reason)
                 if terminal_detail:
@@ -3484,7 +3534,8 @@ class Broadcaster:
         self.running = True
         self.suspending = False
         self.stop_event.clear()
-        self.task = asyncio.create_task(self._job())
+        self.task = asyncio.create_task(self._job(), name=f"broadcast:{self.ddir.name}")
+        self._ensure_autosub_worker()
 
     def start(self, interval_min, hours) -> bool:
         if self.running:
@@ -3522,11 +3573,13 @@ class Broadcaster:
     def stop(self):
         self.suspending = False
         self.stop_event.set()
+        self._stop_autosub_worker()
 
     def suspend(self):
-        """Остановить на время выключения сервиса: состояние сохраняется, после запуска продолжим."""
+        """Остановить кампанию при выключении сервиса, сохранив checkpoint и очередь."""
         self.suspending = True
         self.stop_event.set()
+        self._stop_autosub_worker()
 
     def set_interval(self, minutes):
         old_interval = max(1, int(self.state.get("interval", 60)))
@@ -3649,7 +3702,7 @@ async def check_health(client, ddir, cfg, notifier) -> list[str]:
             await notifier.alert("disconnected", "⚠️ Нет соединения с Telegram, пробую переподключиться.", 3600)
         elif not await client.is_user_authorized():
             problems.append("auth")
-            await notifier.alert("auth", "❌ Сессия аккаунта слетела. Открой в боте раздел «Аккаунты» и пройди авторизацию заново.", 21600)
+            await notifier.alert("auth", "❌ Сессия аккаунта слетела. Открой в веб-панели раздел «Аккаунты» и пройди авторизацию заново.", 21600)
         du = shutil.disk_usage(ddir)
         pct = du.free / du.total * 100
         if pct < cfg.get("low_disk_percent", 10):
@@ -3663,14 +3716,13 @@ async def check_health(client, ddir, cfg, notifier) -> list[str]:
 
 
 # =============================================================================
-#  Управление дополнительными аккаунтами из единой Telegram-панели
+#  Управление Telegram-аккаунтами из веб-панели
 # =============================================================================
 class AccountManager:
-    """Менеджер дополнительных пользовательских сессий.
+    """Owns all Telegram account sessions under the independent web control plane.
 
-    Главный профиль держит одну bot-панель. Дополнительные пользовательские
-    аккаунты работают отдельными Telethon-клиентами с независимыми файлами
-    сессий, конфигами, SQLite и каталогами данных.
+    The web host owns no Telegram session. Every profile, including default,
+    is started as a separately managed task with its own session lock.
     """
     def __init__(self, owner_id: int):
         self.owner_id = int(owner_id)
@@ -3683,7 +3735,7 @@ class AccountManager:
         self.auth_flows: dict[str, dict] = {}
         self.auth_timeout_tasks: dict[str, asyncio.Task] = {}
         self._logging_profiles: set[str] = set()
-        self.notify_fn = None  # shared owner-facing notifier from the primary control bot
+        self.notify_fn = None  # optional notifier hook; web control does not require a Telegram bot
 
     def set_notifier_send_fn(self, send_fn) -> None:
         self.notify_fn = send_fn
@@ -3695,12 +3747,18 @@ class AccountManager:
         return [name for name, _ in account_profiles() if name != "default"]
 
     @staticmethod
+    def _profile_config_path(name: str) -> Path:
+        if name == "default":
+            return DEFAULT_CONFIG_PATH
+        return profile_config_path(name)
+
+    @staticmethod
     def _session_path(cfg: dict, ddir: Path) -> Path:
         return ddir / (str(cfg.get("session_name") or "circles") + ".session")
 
     def has_session(self, name: str) -> bool:
         try:
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             return self._session_path(cfg, data_dir(cfg)).exists()
         except (OSError, ValueError, FileNotFoundError):
             return False
@@ -3710,10 +3768,8 @@ class AccountManager:
         return bool(task and not task.done())
 
     def status(self, name: str) -> str:
-        if name == "default":
-            return "Главный аккаунт · панель управления активна"
         if self.is_running(name):
-            return "Работает"
+            return "Работает · основной аккаунт" if name == "default" else "Работает"
         if name in self.auth_flows:
             flow = self.auth_flows[name]
             if time.monotonic() > flow.get("expires", 0):
@@ -3768,10 +3824,8 @@ class AccountManager:
         return started
 
     async def start_profile(self, name: str) -> tuple[bool, str]:
-        if name == "default":
-            return False, "Главный аккаунт уже работает вместе с панелью управления."
         try:
-            path = profile_config_path(name)
+            path = self._profile_config_path(name)
         except ValueError as e:
             return False, str(e)
         if not path.is_file():
@@ -3779,11 +3833,11 @@ class AccountManager:
         if self.is_running(name):
             return True, "Аккаунт уже работает."
         if name in self.auth_flows:
-            return False, "Сначала заверши авторизацию в боте."
+            return False, "Сначала заверши авторизацию в веб-панели."
         cfg = read_profile_config(path)
         # Starting a profile must not silently change the owner's broadcast policy.
         # The current saved allowlist/exclusions and auto-subscribe choice are respected.
-        problems = [p for p in cfg_problems(cfg) if p != "не задан ID группы-форума"]
+        problems = account_cfg_problems(cfg)
         if problems:
             self.statuses[name] = "Требуется настройка: " + "; ".join(problems)
             return False, "Не хватает настроек: " + "; ".join(problems)
@@ -3819,6 +3873,7 @@ class AccountManager:
 
             code = await run_service(cfg, ddir, allow_broadcast=True,
                                      handle_signals=False, enable_account_manager=False,
+                                     allow_broadcast_autostart=False,
                                      on_broadcaster_ready=register_broadcaster,
                                      on_archiver_ready=register_archiver)
             if code == 2:
@@ -3846,8 +3901,6 @@ class AccountManager:
             ACTIVE_PROFILE.reset(profile_token)
 
     async def stop_profile(self, name: str) -> tuple[bool, str]:
-        if name == "default":
-            return False, "Главный аккаунт нельзя остановить отдельно: на нём работает бот-панель."
         task = self.tasks.get(name)
         if not task or task.done():
             return False, "Аккаунт уже остановлен."
@@ -3905,9 +3958,9 @@ class AccountManager:
             return "error", "Сначала останови этот профиль, затем начинай авторизацию."
         await self._discard_auth(name)
         try:
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             ddir = data_dir(cfg)
-            problems = [p for p in cfg_problems(cfg) if p != "не задан ID группы-форума"]
+            problems = account_cfg_problems(cfg)
             if problems:
                 return "error", "Сначала исправь настройки основного профиля: " + "; ".join(problems)
             client = make_client(cfg, ddir)
@@ -3982,7 +4035,7 @@ class AccountManager:
         client = flow["client"]
         try:
             me = await client.get_me()
-            cfg = read_profile_config(profile_config_path(name))
+            cfg = read_profile_config(self._profile_config_path(name))
             cfg["account_label"] = display_name(me)
             cfg["owner_id"] = int(me.id)
             save_cfg(cfg)
@@ -4034,7 +4087,7 @@ class AccountManager:
     def set_broadcast_number(self, name: str, key: str, value) -> None:
         if key not in {"broadcast_interval_min", "broadcast_hours", "broadcast_delay_min", "broadcast_delay_max"}:
             raise ValueError("Недопустимая настройка рассылки")
-        cfg = self.configs.get(name) or read_profile_config(profile_config_path(name))
+        cfg = self.configs.get(name) or read_profile_config(self._profile_config_path(name))
         if key == "broadcast_delay_min" and float(value) > float(cfg.get("broadcast_delay_max", 1.2)):
             raise ValueError("Минимальная пауза не может быть больше максимальной")
         if key == "broadcast_delay_max" and float(value) < float(cfg.get("broadcast_delay_min", 0.6)):
@@ -6367,20 +6420,13 @@ AUTH_ERRORS = tuple(getattr(errors, n) for n in (
 
 
 async def _dead_session_notice(cfg, ddir, text):
-    """Сессия мертва, а владельца надо предупредить: пишем через бота (id владельца запомнен с прошлых запусков)."""
-    if not (cfg.get("bot_token") and cfg.get("owner_id")):
-        return
-    try:
-        b = TelegramClient(str(ddir / "control_bot"), int(cfg["api_id"]), cfg["api_hash"])
-        await b.start(bot_token=cfg["bot_token"])
-        await b.send_message(int(cfg["owner_id"]), text)
-        await b.disconnect()
-    except Exception:  # noqa: BLE001
-        log.exception("Не удалось отправить уведомление о мёртвой сессии")
+    """Keep auth failures in the web-managed logs; never bootstrap a legacy bot."""
+    log.error("Telegram-профиль требует авторизации: %s", text)
 
 
 async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle_signals=True,
-                      restart_args=None, enable_account_manager=True, on_broadcaster_ready=None,
+                      restart_args=None, enable_account_manager=True, allow_broadcast_autostart=True,
+                      on_broadcaster_ready=None,
                       on_archiver_ready=None) -> int:
     """Run one Telegram account with its own archiver and optional broadcaster."""
     # Startup must not silently rewrite recipient restrictions or auto-subscribe policy.
@@ -6390,9 +6436,10 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
     client = make_client(cfg, ddir)
     await client.connect()
     if not await client.is_user_authorized():
-        log.error("Сессия не авторизована. Пройди авторизацию через Telegram-панель → Аккаунты.")
+        log.error("Сессия не авторизована. Пройди авторизацию через веб-панель → Аккаунты.")
         await client.disconnect()
-        await _dead_session_notice(cfg, ddir, "❌ Сессия аккаунта не авторизована. Открой раздел «Аккаунты» в панели управления и нажми «Авторизовать».")
+        db.close()
+        await _dead_session_notice(cfg, ddir, "Сессия не авторизована. Открой раздел «Аккаунты» в веб-панели и пройди авторизацию.")
         return 2
     me = await client.get_me()
     if cfg.get("owner_id") != me.id:
@@ -6425,58 +6472,21 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             log.exception("Ошибка обработки сообщения")
             await notifier.alert("handler", f"⚠️ Ошибка обработки медиа: {type(e).__name__}: {e}", 1800)
 
-    # Auto-subscription is independent of whether this profile exposes/starts a
-    # broadcast campaign. The live cfg switch controls the listener itself.
+    # The listener only records supported links to the durable queue. The worker
+    # that executes queued actions is started/stopped with the broadcast campaign.
     bc = Broadcaster(cfg, client, ddir, notifier, enabled=True)
     bc.load_files()
     if WEB_MANAGER_RUNTIME is not None:
-        WEB_MANAGER_RUNTIME.register_broadcaster(manager_profile_name, bc)
-    if cfg.get("broadcast_auto_subscribe", True):
-        bc._ensure_autosub_worker()
+        WEB_MANAGER_RUNTIME.register_broadcaster(manager_profile_name, bc) 
     if allow_broadcast and on_broadcaster_ready:
         on_broadcaster_ready(bc)
 
+    # Web panel is the only operator control plane. Do not start a Telegram bot
+    # process even when legacy bot_token remains in config.json.
     bot = None
-    account_manager = None
-    is_primary_profile = Path(cfg.get("_config_path") or DEFAULT_CONFIG_PATH).resolve() == DEFAULT_CONFIG_PATH.resolve()
-    if cfg.get("bot_token"):
-        try:
-            bot = TelegramClient(str(ddir / "control_bot"), int(cfg["api_id"]), cfg["api_hash"],
-                                 connection_retries=-1, retry_delay=5, auto_reconnect=True)
-            await bot.start(bot_token=cfg["bot_token"])
-
-            async def restart_cb():
-                log.info("Перезапуск по команде из бота")
-                await bot.disconnect()
-                await client.disconnect()
-                command_args = restart_args if restart_args is not None else ["run"]
-                os.execv(sys.executable, [sys.executable, str(Path(__file__).resolve()), *command_args])
-
-            if enable_account_manager and is_primary_profile:
-                account_manager = AccountManager(me.id)
-                try:
-                    autostarted = await account_manager.start_existing()
-                    if autostarted:
-                        log.info("Дополнительные аккаунты запущены: %s", ", ".join(autostarted))
-                except Exception:
-                    log.exception("Не удалось автоматически запустить некоторые аккаунты")
-                if WEB_MANAGER_RUNTIME is not None:
-                    WEB_MANAGER_RUNTIME.set_account_manager(account_manager)
-            panel = ControlBot(cfg, ddir, db, arch, bot, me.id, restart_cb, bc, notifier, client,
-                               allow_broadcast=allow_broadcast, account_manager=account_manager)
-            panel.register()
-
-            async def _send(text, buttons=None):
-                await bot.send_message(me.id, text, buttons=buttons)
-
-            notifier.send_fn = _send
-            if account_manager:
-                account_manager.set_notifier_send_fn(_send)
-            await panel.notify_started()
-            log.info("Бот-панель запущена (отвечает только владельцу, id %s)", me.id)
-        except Exception:  # noqa: BLE001
-            log.exception("Бот-панель не запущена - всё остальное продолжит работу без неё")
-            bot = None
+    account_manager = AccountManager(me.id) if enable_account_manager and manager_profile_name == "default" else None
+    if account_manager is not None and WEB_MANAGER_RUNTIME is not None:
+        WEB_MANAGER_RUNTIME.set_account_manager(account_manager)
 
     if target_err:
         await notifier.alert("target", f"⚠️ Архиватор медиа не работает: {target_err}\n"
@@ -6491,19 +6501,19 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             web_manager_started = True
             log.info("Smart Cleaner доступен локально: http://127.0.0.1:%s/", WEB_MANAGER_RUNTIME.port)
         except Exception:  # noqa: BLE001
-            log.exception("Web Manager не запущен; Telegram-панель продолжит работу")
+            log.exception("Web Manager не запущен; веб-панель продолжит работу")
 
     if allow_broadcast:
         # A persisted active campaign is a recoverable checkpoint, not permission
         # to send automatically. Resume only when the explicit autostart flag is on.
         # An explicit --broadcast request still starts a campaign.
         resumed = False
-        autostart_enabled = bool(cfg.get("broadcast_autostart", False))
+        autostart_enabled = bool(allow_broadcast_autostart and cfg.get("broadcast_autostart", False))
         if autostart_enabled:
             resumed = bc.resume()
         elif bc.state.get("active") and float(bc.state.get("end") or 0) > time.time():
-            log.info("Сохранённая рассылка оставлена на паузе: broadcast_autostart=false; "
-                     "для продолжения используй ручной запуск в панели")
+            log.info("Сохранённая рассылка оставлена на паузе: для веб-управляемого аккаунта "
+                     "требуется явный запуск кампании из панели")
         if not resumed:
             if broadcast is not None:
                 bc.start(*broadcast)
@@ -6564,7 +6574,7 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
         await bc.close()
         if account_manager:
             await account_manager.stop_all()
-        if WEB_MANAGER_RUNTIME is not None:
+        if account_manager is not None and WEB_MANAGER_RUNTIME is not None:
             WEB_MANAGER_RUNTIME.set_account_manager(None)
         if web_manager_started and WEB_MANAGER_RUNTIME is not None:
             await WEB_MANAGER_RUNTIME.stop()
@@ -6579,6 +6589,37 @@ async def run_service(cfg, ddir, broadcast=None, *, allow_broadcast=True, handle
             WEB_MANAGER_RUNTIME.unregister_profile(manager_profile_name)
     log.info("Остановлено")
     return code
+
+
+async def run_web_manager_host(cfg: dict) -> int:
+    """Run the web control plane without holding any Telegram account session."""
+    if WEB_MANAGER_RUNTIME is None:
+        raise RuntimeError("Web Manager недоступен: проверь зависимости веб-панели")
+    manager = AccountManager(int(cfg.get("owner_id") or 0))
+    WEB_MANAGER_RUNTIME.set_account_manager(manager)
+    stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    installed_signals = []
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+            installed_signals.append(sig)
+        except (NotImplementedError, RuntimeError):
+            pass
+    try:
+        await WEB_MANAGER_RUNTIME.start()
+        log.info("Веб-панель запущена. Telegram-аккаунты ожидают команду из панели.")
+        await stop_event.wait()
+        return 0
+    finally:
+        await manager.stop_all()
+        await WEB_MANAGER_RUNTIME.stop()
+        WEB_MANAGER_RUNTIME.set_account_manager(None)
+        for sig in installed_signals:
+            try:
+                loop.remove_signal_handler(sig)
+            except Exception:
+                pass
 
 
 async def run_all_accounts(items: list[tuple[str, dict, Path]]) -> int:
@@ -6705,10 +6746,10 @@ def service_state() -> str:
 
 
 def unit_text(all_accounts: bool = False) -> str:
-    # A single supervisor process owns the bot panel and starts additional profiles.
-    # Keeping this command as `run` makes account management available in Telegram.
-    run_args = "run"
-    description = "Telegram circles manager (multi-account bot control)" if all_accounts else "Telegram circles archiver + broadcast + account manager"
+    # A single web host owns the control plane; every Telegram profile is started
+    # and stopped explicitly from the authenticated web panel.
+    run_args = "web"
+    description = "CIRCLES CONTROL Web Manager"
     return f"""[Unit]
 Description={description}
 After=network-online.target
@@ -6723,7 +6764,7 @@ Environment=PYTHONIOENCODING=utf-8
 Environment=LANG=C.UTF-8
 Environment=LC_ALL=C.UTF-8
 ExecStart={sys.executable} {Path(__file__).resolve()} {run_args}
-Restart=always
+Restart=on-failure
 RestartSec=10
 RestartPreventExitStatus=2 3 4
 TimeoutStopSec=30
@@ -6744,8 +6785,7 @@ def install_service(all_accounts: bool = False) -> str:
     action = "restart" if service_state() == "active" else "start"
     rc, out = sc(action, SERVICE)
     if rc == 0:
-        mode = "с управлением аккаунтами из Telegram-бота" if all_accounts else "для основного аккаунта и дополнительных профилей из Telegram-бота"
-        return f"Сервис {mode} установлен, включён в автозапуск и запущен."
+        return "Веб-панель установлена как systemd-служба и запущена. Telegram-аккаунты запускаются только из веб-панели."
     return f"Ошибка: {out}"
 
 
@@ -6959,7 +6999,6 @@ def show_status(cfg):
     print(f"Файл сессии:       {'есть' if sess.exists() else 'нет (нужен вход)'}")
     problems = cfg_problems(cfg)
     print(f"Настройки:         {'OK' if not problems else '; '.join(problems)}")
-    print(f"Бот-панель:        {'токен задан' if cfg.get('bot_token') else 'не настроена (токен от @BotFather)'}")
     print(f"Тем (людей):       {s['topics']}")
     print(f"Медиа всего:       {s['total']}  (отправлено {s['sent']}, ждут повтора {s['unsent']})")
     print(f"Последнее медиа:  {s['last'] or '-'}")
@@ -6979,14 +7018,13 @@ SETTINGS = [
     ("keep_local", "Хранить копии медиа на диске VPS", "bool"),
     ("data_dir", "Папка данных", "str"),
     ("session_name", "Имя файла сессии", "str"),
-    ("bot_token", "Токен бота-панели (@BotFather)", "secret"),
     ("broadcast_interval_min", "Рассылка: интервал между кругами (мин)", "int"),
     ("broadcast_hours", "Рассылка: длительность (часов)", "int"),
-    ("broadcast_autostart", "Рассылка стартует вместе с сервисом", "bool"),
-    ("broadcast_auto_subscribe", "Фоновая автоподписка по ссылкам ботов", "bool"),
+    ("broadcast_autostart", "Legacy: автозапуск рассылки при старте", "bool"),
+    ("broadcast_auto_subscribe", "Автоподписка во время активной кампании", "bool"),
     ("broadcast_spambot", "Рассылка: писать @SpamBot при спам-блоке", "bool"),
     ("broadcast_notify_waves", "Рассылка: отчёт после каждой волны", "bool"),
-    ("tz_offset", "Часовой пояс для времени в боте (UTC+N)", "int"),
+    ("tz_offset", "Часовой пояс для времени в журналах (UTC+N)", "int"),
     ("low_disk_percent", "Предупреждать, если свободно меньше N% диска", "int"),
 ]
 
@@ -7079,19 +7117,13 @@ def people_menu(cfg):
 def service_menu(cfg):
     while True:
         print(f"\n--- Сервис (состояние: {service_state()}) ---")
-        print(" 1. Установить сервис с управлением через Telegram\n 2. Запустить\n 3. Остановить\n"
-              " 4. Перезапустить\n 5. Удалить из автозапуска\n"
-              " 6. Установить сервис для всех аккаунтов с единой бот-панелью\n 0. Назад")
+        print(" 1. Установить службу веб-панели\n 2. Запустить\n 3. Остановить\n"
+              " 4. Перезапустить\n 5. Удалить из автозапуска\n 0. Назад")
         c = ask("Выбор")
         if c in (None, "0"):
             break
         if c == "1":
             print(install_service())
-        elif c == "6":
-            if len(account_profiles()) < 2:
-                print("Дополнительные аккаунты добавляются из Telegram: открой бота → 👤 Аккаунты → ➕ Добавить аккаунт.")
-            else:
-                print(install_service(all_accounts=True))
         elif c in ("2", "3", "4", "5"):
             if not has_systemd():
                 print("Нет systemd.")
@@ -7118,57 +7150,48 @@ def show_log(cfg):
 
 
 def setup_wizard():
-    """Первичная настройка одной командой: ключи -> вход в аккаунт -> проверка -> автозапуск.
-    После неё сервером можно больше не заниматься: всё управление - из бота в Telegram."""
+    """Create local API settings; Telegram profile login is managed from the web panel."""
     cfg = load_cfg()
-    print("\n=== Первичная настройка ===")
-    print("Нужно один раз. Дальше всё управление - из бота в Telegram.\n")
-    steps = [("api_id", "API ID (my.telegram.org -> API development tools)", int),
-             ("api_hash", "API HASH (оттуда же)", str),
-             ("target_chat_id", "ID группы-форума для архива медиа (формат -100...)", int),
-             ("bot_token", "Токен бота-панели (создай у @BotFather, формат 123456789:AAH...)", str)]
-    # A previously interrupted setup saves each field immediately. Detect a malformed
-    # positive chat ID so rerunning the wizard asks for it again instead of skipping it.
-    if cfg.get("target_chat_id") and not re.fullmatch(r"-100\d+", str(cfg["target_chat_id"])):
-        print("Сохранённый ID группы-форума некорректен. Запрошу его повторно.")
-        cfg["target_chat_id"] = 0
-        save_cfg(cfg)
+    print("\n=== Первичная настройка CIRCLES CONTROL ===")
+    print("Создадим настройки веб-панели. Токен Telegram-бота управления не требуется.\n")
+
+    steps = [
+        ("api_id", "API ID (my.telegram.org -> API development tools)", int),
+        ("api_hash", "API HASH (оттуда же)", str),
+    ]
     for key, title, conv in steps:
-        while not cfg[key]:
+        while not cfg.get(key):
             raw = ask(title)
             if not raw:
                 continue
             try:
-                val = conv(raw)
+                value = conv(raw)
             except (TypeError, ValueError):
                 print("Не похоже на то, что нужно. Ещё раз.")
                 continue
-            if key == "target_chat_id" and not re.fullmatch(r"-100\d+", str(val)):
-                print("Нужен ID супергруппы/форума Telegram с префиксом -100, например -1001234567890.")
+            if key == "api_hash" and not value:
                 continue
-            if key == "bot_token" and not re.fullmatch(r"\d+:[\w-]{20,}", val):
-                print("Это не похоже на токен. Формат: 123456789:AAH... (от @BotFather)")
-                continue
-            if key == "api_hash" and not val:
-                continue
-            cfg[key] = val
-        save_cfg(cfg)
-    ddir = data_dir(cfg)
-    setup_logging(ddir)
-    print("\nШаг 2/3. Вход в аккаунт Telegram (код придёт в Telegram).")
-    telegram_action(cfg, lambda: run_login(cfg, ddir))
-    print("\nШаг 3/3. Проверка.")
+            cfg[key] = value
+            save_cfg(cfg)
 
-    def _check():
-        async def inner():
-            for ok, text in await run_check(cfg, ddir):
-                print(("  [OK]  " if ok else "  [!!]  ") + text)
-        return inner()
-    telegram_action(cfg, _check)
-    print("\nУстанавливаю автозапуск...")
-    print(install_service())
-    print("\nГотово. Осталось одно: открой своего бота в Telegram и нажми /start.")
-    print("Дальше рассылка, статус, логи и ошибки - в боте. На сервер заходить не нужно.")
+    raw_target = ask("ID группы-форума для архива медиа (-100..., можно указать позже)")
+    if raw_target:
+        try:
+            target_id = int(raw_target)
+        except (TypeError, ValueError):
+            print("Некорректный ID. Поле оставлено без изменений.")
+        else:
+            if re.fullmatch(r"-100\d+", str(target_id)):
+                cfg["target_chat_id"] = target_id
+                save_cfg(cfg)
+            else:
+                print("Нужен ID супергруппы/форума с префиксом -100. Поле оставлено без изменений.")
+
+    data_dir(cfg)
+    print("\nНастройки сохранены.")
+    print("Запусти ./start.sh — веб-панель поднимется независимо от Telegram-аккаунтов.")
+    print("Открой http://127.0.0.1:8765 через SSH-туннель.")
+    print("В разделе «Аккаунты» авторизуй и запусти основной профиль; токен @BotFather не нужен.")
     return cfg
 
 
@@ -7241,7 +7264,7 @@ def menu():
 def main():
     global CONFIG_PATH
     ap = argparse.ArgumentParser(description="Архиватор медиа Telegram")
-    ap.add_argument("command", nargs="?", choices=["menu", "run", "login", "check", "backfill", "setup",
+    ap.add_argument("command", nargs="?", choices=["menu", "run", "web", "login", "check", "backfill", "setup",
                                                         "accounts", "add-account"])
     ap.add_argument("profile_name", nargs="?", help="имя для add-account")
     ap.add_argument("--profile", help="имя профиля аккаунта для login/check/backfill/run/menu")
@@ -7276,6 +7299,8 @@ def main():
     if args.all_accounts and args.broadcast:
         ap.error("Массовая рассылка запрещена в режиме --all-accounts. Запускайте один профиль отдельно.")
 
+    if args.profile and cmd == "web":
+        ap.error("--profile нельзя использовать с командой web")
     if args.profile:
         try:
             CONFIG_PATH = profile_config_path(args.profile)
@@ -7296,18 +7321,27 @@ def main():
 
     cfg = load_cfg()
     bad = cfg_problems(cfg)
+    if cmd == "web":
+        bad = account_cfg_problems(cfg)
     if bad:
         print("Настройки не заполнены (" + "; ".join(bad) + "). Запустите: python combined.py", file=sys.stderr)
         sys.exit(3)
     ddir = data_dir(cfg)
     setup_logging(ddir)
-    lk = acquire_lock(ddir)
+    if cmd == "web":
+        runtime_lock_dir = BASE / "manager_data"
+        runtime_lock_dir.mkdir(parents=True, exist_ok=True)
+        lk = acquire_lock(runtime_lock_dir)
+    else:
+        lk = acquire_lock(ddir)
     if lk is None:
         log.error("Другая копия уже работает с этой сессией.")
         sys.exit(4)
 
     try:
-        if cmd == "run":
+        if cmd == "web":
+            sys.exit(asyncio.run(run_web_manager_host(cfg)))
+        elif cmd == "run":
             bcast = ((args.interval or cfg["broadcast_interval_min"], args.hours or cfg["broadcast_hours"])
                      if args.broadcast else None)
             restart_args = ["run"] + (["--profile", args.profile] if args.profile else [])
