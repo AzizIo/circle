@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.14"
+APP_VERSION = "3.9.15"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -1152,14 +1152,24 @@ class TelegramManagerRuntime:
         cfg = self.configs[name]
         try:
             payload = await request.json()
-            selected = cfg.get("broadcast_allowlist") or []
-            count = len(selected) if isinstance(selected, list) else 0
-            expected = f"START {count}"
-            confirmation = str(payload.get("confirmation", "")).strip()
-            if not count or not cfg.get("broadcast_allowlist_only"):
-                raise ValueError("Сначала выбери конкретные чаты-получатели и сохрани список")
-            if not secrets.compare_digest(confirmation, expected):
-                raise ValueError(f"Для запуска подтверди действие текстом: {expected}")
+            if not isinstance(payload, dict) or payload.get("confirmed") is not True:
+                raise ValueError("Нужно подтвердить запуск в панели управления")
+            if not cfg.get("broadcast_allowlist_only"):
+                raise ValueError("Сначала выбери и сохрани конкретных получателей")
+            raw_requested = payload.get("recipient_ids")
+            if not isinstance(raw_requested, list) or not raw_requested or len(raw_requested) > 3000:
+                raise ValueError("Не передан сохранённый список получателей. Обнови список и повтори запуск")
+            requested_ids = []
+            for raw in raw_requested:
+                if isinstance(raw, bool):
+                    raise ValueError("Некорректный ID получателя")
+                chat_id = int(raw)
+                if not chat_id:
+                    raise ValueError("Некорректный ID получателя")
+                requested_ids.append(chat_id)
+            requested_ids = list(dict.fromkeys(requested_ids))
+            if not requested_ids:
+                raise ValueError("Нет получателей для запуска")
             post = await bc.preview()
             if post:
                 self.broadcast_post_previews[name] = {
@@ -1168,21 +1178,37 @@ class TelegramManagerRuntime:
                     "preview_available": True,
                 }
             if not post:
-                raise ValueError("В Избранном нет доступного сообщения для рассылки")
+                raise ValueError("В Избранном нет доступного сообщения для кампании")
+            # Refreshing dialogs may prune stale IDs from the saved allowlist.
+            # Intersect with the exact list the user confirmed so a concurrent or
+            # previously saved extra recipient can never be added to this launch.
             live = {int(cid) for cid, _ in await self._validated_broadcast_chats(bc)}
-            selected_ids = {int(x) for x in selected}
-            if not selected_ids.issubset(live):
-                raise ValueError("Список получателей изменился. Обнови чаты и сохрани выбор заново")
+            current_allowlist = set()
+            for raw in cfg.get("broadcast_allowlist") or []:
+                try:
+                    current_allowlist.add(int(raw))
+                except (TypeError, ValueError, OverflowError):
+                    continue
+            selected_ids = sorted(set(requested_ids).intersection(current_allowlist, live))
+            if not selected_ids:
+                raise ValueError("Все выбранные группы устарели или больше недоступны. Обнови список получателей")
+            if selected_ids != sorted(current_allowlist):
+                cfg["broadcast_allowlist"] = selected_ids
+                cfg["broadcast_allowlist_only"] = True
+                self._save_config(cfg)
             pending = bc.state.get("pending_wave") if isinstance(bc.state.get("pending_wave"), dict) else None
             if bc.state.get("active") and pending:
                 pending_ids = {int(x) for x in pending.get("chat_ids", [])}
-                if not pending_ids.issubset(selected_ids):
-                    raise ValueError("Есть незавершённая очередь с другими получателями. Не запускаю её с новым списком — сначала заверши или останови прежнюю кампанию.")
+                if not pending_ids.issubset(set(selected_ids)):
+                    raise ValueError("Есть незавершённая очередь с другим списком получателей. Сначала заверши или останови прежнюю кампанию")
             ok = bc.start(cfg.get("broadcast_interval_min", 60), cfg.get("broadcast_hours", 12))
             if not ok:
                 raise ValueError("Не удалось запустить кампанию. Проверь её текущее состояние")
-            return web.json_response({"ok": True, "message": "Кампания запущена", "selected_count": count}, status=202)
-        except (ValueError, TypeError) as exc:
+            return web.json_response({
+                "ok": True, "message": "Кампания запущена",
+                "selected_count": len(selected_ids), "selected_ids": selected_ids,
+            }, status=202)
+        except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
 
     async def stop_broadcast(self, request):
