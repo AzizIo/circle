@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.13"
+APP_VERSION = "3.9.14"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -59,6 +59,7 @@ class TelegramManagerRuntime:
         self.data_dirs: dict[str, Path] = {}
         self.cleaners: dict[str, SmartCleaner] = {}
         self.broadcasters: dict[str, Any] = {}
+        self.broadcast_post_previews: dict[str, dict] = {}
         self.scan_tasks: dict[str, asyncio.Task] = {}
         self.scan_results: dict[str, dict] = {}
         self.media_cleanup_previews: dict[str, dict] = {}
@@ -97,6 +98,13 @@ class TelegramManagerRuntime:
     def register_broadcaster(self, name: str, broadcaster: Any) -> None:
         if PROFILE_RE.fullmatch(name):
             self.broadcasters[name] = broadcaster
+            self.broadcast_post_previews.pop(name, None)
+            post_id = int((getattr(broadcaster, "state", {}) or {}).get("post_id") or 0)
+            if post_id:
+                self.broadcast_post_previews[name] = {
+                    "id": post_id, "text": "", "media": None, "pinned": True,
+                    "preview_available": False,
+                }
 
     def _track_profile_task(self, name: str, task: asyncio.Task) -> None:
         self.profile_tasks.setdefault(name, set()).add(task)
@@ -113,6 +121,7 @@ class TelegramManagerRuntime:
         self.configs.pop(name, None)
         self.data_dirs.pop(name, None)
         self.broadcasters.pop(name, None)
+        self.broadcast_post_previews.pop(name, None)
         pending = list(self.profile_tasks.get(name, set()))
         for task in pending:
             if not task.done():
@@ -501,7 +510,8 @@ class TelegramManagerRuntime:
             "last_error": state.get("last_error", ""),
             "pending_total": total, "pending_completed": completed,
             "pending_remaining": max(0, total - completed), "progress": progress,
-            "history": state.get("history", [])[-30:], "post": post,
+            "history": state.get("history", [])[-30:],
+            "post": post or self.broadcast_post_previews.get(name),
             "allowlist_only": bool(self.configs[name].get("broadcast_allowlist_only")),
             "selected_recipients": len(self.configs[name].get("broadcast_allowlist") or []),
         }
@@ -983,14 +993,15 @@ class TelegramManagerRuntime:
     async def broadcast_status(self, request):
         name = request.match_info["name"]
         bc = self._get_broadcaster(name)
-        post = None
-        try:
-            msg = await bc.preview()
-            if msg:
-                post = {"id": int(msg["id"]), "text": msg.get("text", "")[:3000],
-                        "media": bool(msg.get("media")), "pinned": bool(msg.get("pinned"))}
-        except Exception as exc:
-            log.debug("Broadcast preview unavailable for %s: %s", name, type(exc).__name__)
+        # This endpoint is polled frequently by the UI. It must be a local state read,
+        # never a Telegram get_messages() call through bc.preview().
+        post = self.broadcast_post_previews.get(name)
+        if post is None:
+            post_id = int((getattr(bc, "state", {}) or {}).get("post_id") or 0)
+            if post_id:
+                post = {"id": post_id, "text": "", "media": None,
+                        "pinned": True, "preview_available": False}
+                self.broadcast_post_previews[name] = post
         return web.json_response(self._broadcast_view(name, bc, post))
 
     async def saved_posts(self, request):
@@ -1015,7 +1026,11 @@ class TelegramManagerRuntime:
             post = await bc.select_post(post_id)
             if not post:
                 raise ValueError("Сообщение не найдено в Избранном этого аккаунта")
-            return web.json_response({"ok": True, "post": post})
+            cached = {"id": int(post["id"]), "text": str(post.get("text", "") or "")[:3000],
+                      "media": bool(post.get("media")), "pinned": bool(post.get("pinned")),
+                      "preview_available": True}
+            self.broadcast_post_previews[name] = cached
+            return web.json_response({"ok": True, "post": cached})
         except (ValueError, TypeError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
 
@@ -1146,6 +1161,12 @@ class TelegramManagerRuntime:
             if not secrets.compare_digest(confirmation, expected):
                 raise ValueError(f"Для запуска подтверди действие текстом: {expected}")
             post = await bc.preview()
+            if post:
+                self.broadcast_post_previews[name] = {
+                    "id": int(post["id"]), "text": str(post.get("text", "") or "")[:3000],
+                    "media": bool(post.get("media")), "pinned": bool(post.get("pinned")),
+                    "preview_available": True,
+                }
             if not post:
                 raise ValueError("В Избранном нет доступного сообщения для рассылки")
             live = {int(cid) for cid, _ in await self._validated_broadcast_chats(bc)}
