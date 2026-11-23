@@ -612,10 +612,11 @@ class TelegramManagerRuntime:
                     bc.set_interval(cfg["broadcast_interval_min"])
                 if "broadcast_hours" in changed and bc.running:
                     bc.set_duration(cfg["broadcast_hours"])
-                if "broadcast_auto_subscribe" in changed and cfg["broadcast_auto_subscribe"]:
-                    bc._ensure_autosub_worker()
-                if "broadcast_auto_subscribe" in changed and not cfg["broadcast_auto_subscribe"]:
-                    bc._autosub_wakeup.set()
+                if "broadcast_auto_subscribe" in changed:
+                    if cfg["broadcast_auto_subscribe"] and bc.running:
+                        bc._ensure_autosub_worker()
+                    else:
+                        bc._stop_autosub_worker()
             return web.json_response({"ok": True, "settings": self._safe_config(cfg)})
         except (ValueError, TypeError, OSError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
