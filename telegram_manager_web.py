@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.20"
+APP_VERSION = "3.9.21"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -493,14 +493,40 @@ class TelegramManagerRuntime:
     def _broadcast_view(self, name: str, bc: Any, post: dict | None = None) -> dict:
         state = dict(bc.state)
         pending = state.get("pending_wave") if isinstance(state.get("pending_wave"), dict) else {}
-        total = len(pending.get("chat_ids", []))
-        completed = len(pending.get("completed_ids", []))
-        progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
+        pending_ids = set()
+        raw_pending_ids = pending.get("chat_ids", [])
+        for raw in raw_pending_ids if isinstance(raw_pending_ids, list) else []:
+            try:
+                pending_ids.add(int(raw))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        completed_ids = set()
+        raw_completed_ids = pending.get("completed_ids", [])
+        for raw in raw_completed_ids if isinstance(raw_completed_ids, list) else []:
+            try:
+                completed_ids.add(int(raw))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        total = len(pending_ids)
+        completed = len(completed_ids.intersection(pending_ids))
         profile_cfg = self.configs[name]
+        current_allowlist = set()
+        for raw in profile_cfg.get("broadcast_allowlist") or []:
+            try:
+                current_allowlist.add(int(raw))
+            except (TypeError, ValueError, OverflowError):
+                continue
+        pending_not_selected = pending_ids.difference(current_allowlist)
+        remaining_not_selected = pending_ids.difference(completed_ids).difference(current_allowlist)
+        progress = list(getattr(bc, "progress", (0, 0)) or (0, 0))
         return {
             "profile": name,
-            "account_label": str(profile_cfg.get("account_label") or name),
+            "is_primary": name == "default",
+            "account_label": str(profile_cfg.get("account_label") or ("Основной аккаунт" if name == "default" else name)),
             "account_id": int(profile_cfg.get("owner_id") or 0),
+            "pending_not_selected": len(pending_not_selected),
+            "pending_remaining_not_selected": len(remaining_not_selected),
+            "pending_completed_not_selected": len(pending_not_selected.intersection(completed_ids)),
             "running": bool(bc.running), "status": bc.short(),
             "active": bool(state.get("active")), "end": state.get("end", 0),
             "next": state.get("next", 0), "interval": state.get("interval", 0),
@@ -1245,9 +1271,28 @@ class TelegramManagerRuntime:
                 self._save_config(cfg)
             pending = bc.state.get("pending_wave") if isinstance(bc.state.get("pending_wave"), dict) else None
             if bc.state.get("active") and pending:
-                pending_ids = {int(x) for x in pending.get("chat_ids", [])}
-                if not pending_ids.issubset(set(selected_ids)):
-                    raise ValueError("Есть незавершённая очередь с другим списком получателей. Сначала заверши или останови прежнюю кампанию")
+                pending_ids = set()
+                for raw_id in pending.get("chat_ids", []):
+                    try:
+                        pending_ids.add(int(raw_id))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                completed_ids = set()
+                for raw_id in pending.get("completed_ids", []):
+                    try:
+                        completed_ids.add(int(raw_id))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                missing_ids = pending_ids.difference(selected_ids)
+                if missing_ids:
+                    missing_remaining = missing_ids.difference(completed_ids)
+                    raise ValueError(
+                        "Нельзя продолжить старую очередь: "
+                        f"{len(missing_ids)} ID из исходных {len(pending_ids)} отсутствуют в текущем списке "
+                        f"(уже обработано: {len(missing_ids.intersection(completed_ids))}; "
+                        f"ещё ожидали обработки: {len(missing_remaining)}). "
+                        "Очередь сохранена без изменений. Сверь текущий список получателей с исходной очередью."
+                    )
             ok = bc.start(cfg.get("broadcast_interval_min", 60), cfg.get("broadcast_hours", 12))
             if not ok:
                 raise ValueError("Не удалось запустить кампанию. Проверь её текущее состояние")
