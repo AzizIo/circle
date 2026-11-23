@@ -22,7 +22,7 @@ from aiohttp import web
 from smart_cleaner import SmartCleaner
 
 log = logging.getLogger("circles.web_manager")
-APP_VERSION = "3.9.6"
+APP_VERSION = "3.9.7"
 PROFILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,39}$")
 PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 INDEX_HTML = PANEL_PATH.read_text(encoding="utf-8")
@@ -71,6 +71,8 @@ class TelegramManagerRuntime:
         self.host = "127.0.0.1"
         self.port = 8765
         self.started_at = time.time()
+        self.api_latency_samples: list[tuple[float, float, int]] = []
+        self._cpu_sample: tuple[int, int] | None = None
 
     def set_account_manager(self, manager: Any) -> None:
         self.account_manager = manager
@@ -190,6 +192,28 @@ class TelegramManagerRuntime:
         return value
 
     @web.middleware
+    async def metrics_middleware(self, request: web.Request, handler):
+        track = request.path.startswith("/api/") and not request.path.endswith("/metrics")
+        started = time.perf_counter()
+        status = 200
+        try:
+            response = await handler(request)
+            status = response.status
+            return response
+        except web.HTTPException as exc:
+            status = exc.status
+            raise
+        except Exception:
+            status = 500
+            raise
+        finally:
+            if track:
+                now = time.time()
+                self.api_latency_samples.append((now, (time.perf_counter() - started) * 1000.0, status))
+                cutoff = now - 300.0
+                self.api_latency_samples = [sample for sample in self.api_latency_samples if sample[0] >= cutoff][-1000:]
+
+    @web.middleware
     async def auth_middleware(self, request: web.Request, handler):
         if request.path in {"/", "/health"}:
             return await handler(request)
@@ -207,10 +231,11 @@ class TelegramManagerRuntime:
             raise RuntimeError("По умолчанию Web Manager доступен только на localhost. Используй SSH-туннель.")
         self.port = int(os.getenv("CIRCLES_WEB_PORT", "8765"))
         self.token = self._token()
-        app = web.Application(middlewares=[self.auth_middleware], client_max_size=128 * 1024)
+        app = web.Application(middlewares=[self.metrics_middleware, self.auth_middleware], client_max_size=128 * 1024)
         app.router.add_get("/", self.index)
         app.router.add_get("/health", self.health)
         app.router.add_get("/api/system", self.system)
+        app.router.add_get("/api/profiles/{name}/metrics", self.metrics)
         app.router.add_get("/api/profiles", self.profiles)
         app.router.add_post("/api/accounts", self.create_account)
         app.router.add_post("/api/profiles/{name}/login/start", self.login_start)
@@ -286,6 +311,86 @@ class TelegramManagerRuntime:
             "ok": True, "version": APP_VERSION, "uptime_seconds": int(time.time() - self.started_at),
             "disk_total": usage.total, "disk_free": usage.free,
             "profiles_online": len(self.clients),
+        })
+
+    @staticmethod
+    def _host_cpu_percent(previous: tuple[int, int] | None) -> tuple[float | None, tuple[int, int] | None]:
+        try:
+            parts = Path("/proc/stat").read_text(encoding="ascii").splitlines()[0].split()
+            values = [int(value) for value in parts[1:]]
+            total = sum(values)
+            idle = sum(values[3:5]) if len(values) >= 5 else values[3]
+            current = (total, idle)
+            if previous is None:
+                return None, current
+            delta_total = total - previous[0]
+            delta_idle = idle - previous[1]
+            if delta_total <= 0:
+                return None, current
+            return round(max(0.0, min(100.0, 100.0 * (delta_total - delta_idle) / delta_total)), 1), current
+        except (OSError, IndexError, ValueError):
+            return None, previous
+
+    @staticmethod
+    def _memory_snapshot() -> dict[str, int | None]:
+        values: dict[str, int] = {}
+        try:
+            for line in Path("/proc/meminfo").read_text(encoding="ascii").splitlines():
+                key, raw = line.split(":", 1)
+                parts = raw.strip().split()
+                if parts:
+                    values[key] = int(parts[0]) * 1024
+        except (OSError, ValueError):
+            pass
+        total = values.get("MemTotal")
+        available = values.get("MemAvailable", values.get("MemFree"))
+        rss = None
+        try:
+            for line in Path("/proc/self/status").read_text(encoding="ascii").splitlines():
+                if line.startswith("VmRSS:"):
+                    rss = int(line.split()[1]) * 1024
+                    break
+        except (OSError, ValueError, IndexError):
+            pass
+        used_percent = round(100.0 * (total - available) / total, 1) if total and available is not None else None
+        return {"total_bytes": total, "available_bytes": available,
+                "used_percent": used_percent, "process_rss_bytes": rss}
+
+    @staticmethod
+    def _sqlite_sizes(data_dir: Path) -> dict[str, int]:
+        def size_for(stem: str) -> int:
+            total = 0
+            for suffix in ("", "-wal", "-shm"):
+                try:
+                    total += (data_dir / f"{stem}{suffix}").stat().st_size
+                except OSError:
+                    continue
+            return total
+        return {"archive_bytes": size_for("circles.db"),
+                "catalog_bytes": size_for("smart_cleaner.sqlite3")}
+
+    async def metrics(self, request):
+        name = request.match_info["name"]
+        self._get_profile(name)
+        now = time.time()
+        cpu_percent, self._cpu_sample = self._host_cpu_percent(self._cpu_sample)
+        memory = self._memory_snapshot()
+        sqlite = self._sqlite_sizes(self.data_dirs[name])
+        recent = [sample for sample in self.api_latency_samples if sample[0] >= now - 60.0]
+        latencies = sorted(sample[1] for sample in recent)
+        p95 = latencies[max(0, math.ceil(len(latencies) * 0.95) - 1)] if latencies else None
+        api = {
+            "requests_60s": len(recent),
+            "errors_60s": sum(1 for sample in recent if sample[2] >= 500),
+            "avg_ms": round(sum(latencies) / len(latencies), 1) if latencies else None,
+            "p95_ms": round(p95, 1) if p95 is not None else None,
+            "last_ms": round(recent[-1][1], 1) if recent else None,
+        }
+        disk = shutil.disk_usage(self.data_dirs[name])
+        return web.json_response({
+            "sampled_at": now, "cpu_percent": cpu_percent, "memory": memory,
+            "sqlite": {**sqlite, "total_bytes": sum(sqlite.values())},
+            "api": api, "disk": {"total_bytes": disk.total, "free_bytes": disk.free},
         })
 
     async def profiles(self, request):
@@ -528,7 +633,8 @@ class TelegramManagerRuntime:
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"База архива недоступна: {type(exc).__name__}")
 
-    def _archive_people_sync(self, name: str, query: str, limit: int, offset: int) -> dict:
+    def _archive_people_sync(self, name: str, query: str, limit: int, offset: int,
+                             compact: bool = False) -> dict:
         conn = self._archive_connection(name)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
@@ -541,14 +647,16 @@ class TelegramManagerRuntime:
             total = int(conn.execute(
                 f"SELECT COUNT(*) FROM topics t {where}", params
             ).fetchone()[0])
+            optional_fields = "" if compact else (
+                ", MIN(c.date_utc) AS first_media, COALESCE(SUM(c.duration),0) AS total_duration"
+            )
+            topic_field = "" if compact else "t.topic_id,"
             rows = conn.execute(
-                f"""SELECT t.user_id,t.title,t.topic_id,
+                f"""SELECT t.user_id,t.title,{topic_field}
                     COUNT(c.msg_id) AS media_count,
                     COALESCE(SUM(CASE WHEN c.sent=1 THEN 1 ELSE 0 END),0) AS sent_count,
                     COALESCE(SUM(CASE WHEN c.sent=0 THEN 1 ELSE 0 END),0) AS pending_count,
-                    MAX(c.date_utc) AS last_media,
-                    MIN(c.date_utc) AS first_media,
-                    COALESCE(SUM(c.duration),0) AS total_duration
+                    MAX(c.date_utc) AS last_media{optional_fields}
                     FROM topics t LEFT JOIN circles c ON {join}
                     {where}
                     GROUP BY t.user_id,t.title,t.topic_id
@@ -572,23 +680,33 @@ class TelegramManagerRuntime:
         query = request.query.get("query", "").strip()[:120]
         try:
             result = await asyncio.to_thread(
-                self._archive_people_sync, name, query, limit, offset
+                self._archive_people_sync, name, query, limit, offset,
+                request.query.get("compact") == "1"
             )
             return web.json_response(result)
         except (OSError, ValueError) as exc:
             raise web.HTTPServiceUnavailable(text=f"Каталог архива недоступен: {type(exc).__name__}")
 
-    def _archive_person_media_sync(self, name: str, user_id: int, limit: int, offset: int) -> dict:
+    def _archive_person_media_sync(self, name: str, user_id: int, limit: int, offset: int,
+                                   compact: bool = False) -> dict:
         conn = self._archive_connection(name)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(circles)")}
             media_col = "c.media_type" if "media_type" in columns else "'round_video'"
             mime_col = "c.mime_type" if "mime_type" in columns else "''"
             size_col = "c.file_size" if "file_size" in columns else "0"
+            if compact:
+                select_fields = (
+                    f"c.msg_id,c.date_utc,c.outgoing,c.sent,{media_col} AS media_type,"
+                    f"{size_col} AS file_size,c.file_path"
+                )
+            else:
+                select_fields = (
+                    f"c.msg_id,c.date_utc,c.duration,c.outgoing,c.sent,c.attempts,"
+                    f"{media_col} AS media_type,{mime_col} AS mime_type,{size_col} AS file_size,c.file_path"
+                )
             rows = conn.execute(
-                f"""SELECT c.msg_id,c.date_utc,c.duration,c.outgoing,c.sent,c.attempts,
-                    {media_col} AS media_type,{mime_col} AS mime_type,{size_col} AS file_size,
-                    c.file_path
+                f"""SELECT {select_fields}
                     FROM circles c WHERE c.user_id=?
                     ORDER BY c.date_utc DESC,c.msg_id DESC LIMIT ? OFFSET ?""",
                 (user_id, limit, offset)
@@ -620,7 +738,8 @@ class TelegramManagerRuntime:
             raise web.HTTPBadRequest(text="Некорректный ID или пагинация")
         try:
             result = await asyncio.to_thread(
-                self._archive_person_media_sync, name, user_id, limit, offset
+                self._archive_person_media_sync, name, user_id, limit, offset,
+                request.query.get("compact") == "1"
             )
             return web.json_response(result)
         except (OSError, ValueError) as exc:
@@ -1033,17 +1152,43 @@ class TelegramManagerRuntime:
         name = request.match_info["name"]
         client, cleaner = self._get_profile(name)
         scan_id = secrets.token_urlsafe(12)
+        started_at = time.time()
+        self.scan_results[scan_id] = {
+            "status": "running", "dialogs_seen": 0, "scanned": 0,
+            "started_at": started_at, "updated_at": started_at,
+        }
+
         async def work():
             try:
-                self.scan_results[scan_id] = {"status": "running"}
-                result = await cleaner.scan(client)
-                self.scan_results[scan_id] = {"status": "completed", "result": result}
+                def report_progress(dialogs_seen: int, scanned: int) -> None:
+                    self.scan_results[scan_id] = {
+                        "status": "running", "dialogs_seen": dialogs_seen,
+                        "scanned": scanned, "started_at": started_at,
+                        "updated_at": time.time(),
+                        "elapsed_seconds": round(time.time() - started_at, 1),
+                    }
+
+                result = await cleaner.scan(client, progress=report_progress)
+                self.scan_results[scan_id] = {
+                    "status": "completed", "result": result,
+                    "dialogs_seen": result.get("dialogs_seen", 0),
+                    "scanned": result.get("scanned", 0),
+                    "elapsed_seconds": round(time.time() - started_at, 1),
+                }
             except asyncio.CancelledError:
-                self.scan_results[scan_id] = {"status": "cancelled"}
+                self.scan_results[scan_id] = {
+                    "status": "cancelled", "dialogs_seen": self.scan_results[scan_id].get("dialogs_seen", 0),
+                    "scanned": self.scan_results[scan_id].get("scanned", 0),
+                }
                 raise
             except Exception as exc:
                 log.exception("Smart Cleaner scan failed for profile %s", name)
-                self.scan_results[scan_id] = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+                self.scan_results[scan_id] = {
+                    "status": "failed", "error": f"{type(exc).__name__}: {exc}",
+                    "dialogs_seen": self.scan_results[scan_id].get("dialogs_seen", 0),
+                    "scanned": self.scan_results[scan_id].get("scanned", 0),
+                }
+
         task = asyncio.create_task(work(), name=f"smart-cleaner-scan:{name}")
         self.scan_tasks[scan_id] = task
         self._track_profile_task(name, task)
@@ -1063,7 +1208,8 @@ class TelegramManagerRuntime:
                 cleaner.list_catalog,
                 category=request.query.get("category") or None, query=request.query.get("query", ""),
                 peer_type=peer_type, include_protected=True,
-                limit=int(request.query.get("limit", 100)), offset=int(request.query.get("offset", 0)))
+                limit=int(request.query.get("limit", 100)), offset=int(request.query.get("offset", 0)),
+                compact=request.query.get("compact") == "1")
             return web.json_response(result)
         except (ValueError, TypeError) as exc:
             raise web.HTTPBadRequest(text=str(exc))
