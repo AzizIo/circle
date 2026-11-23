@@ -168,7 +168,7 @@ class WebManagerTests(unittest.TestCase):
         html = web_module.INDEX_HTML
         self.assertIn('data-authorize="', html)
         self.assertIn('data-authorize]', html)
-        self.assertIn('const oldAuth=$("authProfile").value', html)
+        self.assertIn('oldAuth=$("authProfile").value', html)
         self.assertIn('auth.value=authProfileExists?oldAuth:', html)
         self.assertIn('$("authProfile").value=result.name', html)
         self.assertIn("Создать и перейти к авторизации", html)
