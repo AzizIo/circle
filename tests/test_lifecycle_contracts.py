@@ -437,3 +437,5 @@ def test_web_broadcast_status_treats_finalizing_task_as_busy():
     assert '"running": worker_busy' in body
     start = _block(source, "    async def start_broadcast(", "    async def resolve_broadcast_uncertain(")
     assert 'task is not None and not task.done()' in start
+    review = _block(source, "    async def resolve_broadcast_uncertain(", "    async def stop_broadcast(")
+    assert 'task is not None and not task.done()' in review
