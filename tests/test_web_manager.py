@@ -479,6 +479,101 @@ class WebManagerTests(unittest.TestCase):
                     await runtime.stop()
         asyncio.run(run())
 
+    def test_archive_compact_payload_skips_unrendered_fields(self):
+        import sqlite3
+
+        with tempfile.TemporaryDirectory() as td:
+            data_dir = Path(td)
+            class FakeClient:
+                async def iter_dialogs(self):
+                    if False:
+                        yield None
+
+            runtime = TelegramManagerRuntime(base_dir=td)
+            runtime.register_profile("default", FakeClient(), {}, data_dir)
+            db = sqlite3.connect(data_dir / "circles.db")
+            try:
+                db.executescript("""
+                    CREATE TABLE topics(topic_id INTEGER PRIMARY KEY,user_id INTEGER,title TEXT);
+                    CREATE TABLE circles(
+                        topic_id INTEGER,user_id INTEGER,msg_id INTEGER,date_utc TEXT,duration INTEGER,
+                        outgoing INTEGER,sent INTEGER,attempts INTEGER,media_type TEXT,mime_type TEXT,
+                        file_size INTEGER,file_path TEXT
+                    );
+                """)
+                db.execute("INSERT INTO topics VALUES(1,123,'Archive user')")
+                db.execute(
+                    "INSERT INTO circles VALUES(1,123,77,'2026-11-23T10:00:00Z',12,0,1,2,"
+                    "'video','video/mp4',4096,'/missing/video.mp4')"
+                )
+                db.commit()
+            finally:
+                db.close()
+
+            try:
+                full_people = runtime._archive_people_sync("default", "", 50, 0)
+                compact_people = runtime._archive_people_sync("default", "", 50, 0, compact=True)
+                self.assertIn("topic_id", full_people["items"][0])
+                self.assertIn("first_media", full_people["items"][0])
+                self.assertNotIn("topic_id", compact_people["items"][0])
+                self.assertNotIn("first_media", compact_people["items"][0])
+                self.assertEqual(compact_people["items"][0]["media_count"], 1)
+
+                full_media = runtime._archive_person_media_sync("default", 123, 30, 0)
+                compact_media = runtime._archive_person_media_sync("default", 123, 30, 0, compact=True)
+                self.assertIn("duration", full_media["items"][0])
+                self.assertIn("attempts", full_media["items"][0])
+                self.assertIn("mime_type", full_media["items"][0])
+                self.assertNotIn("duration", compact_media["items"][0])
+                self.assertNotIn("attempts", compact_media["items"][0])
+                self.assertNotIn("mime_type", compact_media["items"][0])
+                self.assertEqual(compact_media["items"][0]["msg_id"], 77)
+            finally:
+                runtime.cleaners["default"].close()
+
+    def test_system_metrics_report_sqlite_ram_and_recent_api_latency(self):
+        async def run():
+            import time
+            with tempfile.TemporaryDirectory() as td:
+                class FakeClient:
+                    async def iter_dialogs(self):
+                        if False:
+                            yield None
+
+                data_dir = Path(td)
+                runtime = TelegramManagerRuntime(base_dir=td)
+                runtime.token = "unit-test-token"
+                runtime.register_profile("default", FakeClient(), {}, data_dir)
+                (data_dir / "circles.db").write_bytes(b"x" * 100)
+                (data_dir / "circles.db-wal").write_bytes(b"y" * 23)
+                now = time.time()
+                runtime.api_latency_samples = [
+                    (now - 2, 12.5, 200),
+                    (now - 1, 55.0, 503),
+                ]
+                app = web.Application(middlewares=[runtime.metrics_middleware, runtime.auth_middleware])
+                app.router.add_get("/api/profiles/{name}/metrics", runtime.metrics)
+                client = TestClient(TestServer(app))
+                await client.start_server()
+                try:
+                    response = await client.get(
+                        "/api/profiles/default/metrics",
+                        headers={"Authorization": "Bearer unit-test-token"},
+                    )
+                    self.assertEqual(response.status, 200)
+                    data = await response.json()
+                    self.assertEqual(data["sqlite"]["archive_bytes"], 123)
+                    self.assertGreater(data["sqlite"]["total_bytes"], 123)
+                    self.assertIn("total_bytes", data["memory"])
+                    self.assertIn("process_rss_bytes", data["memory"])
+                    self.assertEqual(data["api"]["requests_60s"], 2)
+                    self.assertEqual(data["api"]["errors_60s"], 1)
+                    self.assertEqual(data["api"]["p95_ms"], 55.0)
+                finally:
+                    await client.close()
+                    await runtime.stop()
+        asyncio.run(run())
+
     def test_archive_media_sort_index_is_created_and_used(self):
         import combined_multi_account as app_module
 
