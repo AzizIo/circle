@@ -37,7 +37,7 @@ PANEL_PATH = Path(__file__).with_name("telegram_manager_panel.html")
 def normalize_profile_name(raw_name: str) -> tuple[str, str]:
     """Return a safe ASCII folder name plus a human-readable account label."""
     label = str(raw_name or "").strip()
-    label = re.sub(r"[\\x00-\\x1f\\x7f\\u200e\\u200f\\u202a-\\u202e]", "", label)[:80].strip()
+    label = re.sub(r"[\x00-\x1f\x7f]", "", label)[:80].strip()
     if not label:
         raise ValueError("Укажи название аккаунта")
     slug = label.lower().translate(_CYRILLIC_PROFILE_TRANSLATION)
